@@ -25,8 +25,8 @@ UPDATE_DIR="$(realpath -m "$UPDATE_DIR")"
 [[ "$PROJECT_DIR" != *' '* && "$UPDATE_DIR" != *' '* ]]
 
 ensure_env UPDATE_HOST_DIR "$UPDATE_DIR"
-ensure_env UPDATE_RELEASE_API "https://api.github.com/repos/najiuwanan/xianyu-Plus/releases/latest"
-ensure_env UPDATE_GITHUB_REPOSITORY "najiuwanan/xianyu-Plus"
+ensure_env UPDATE_RELEASE_API "https://api.github.com/repos/najiuwanan511/xianyu-Plus/releases/latest"
+ensure_env UPDATE_GITHUB_REPOSITORY "najiuwanan511/xianyu-Plus"
 
 mkdir -p "$UPDATE_DIR" /etc/xianyu-plus /usr/local/lib/xianyu-plus
 chmod 1777 "$UPDATE_DIR"
@@ -34,7 +34,7 @@ install -m 0755 "$SCRIPT_DIR/xianyu-plus-update-agent.sh" /usr/local/lib/xianyu-
 cat > /etc/xianyu-plus/update-agent.env <<EOF
 PROJECT_DIR=$PROJECT_DIR
 UPDATE_DIR=$UPDATE_DIR
-UPDATE_RELEASE_API=https://api.github.com/repos/najiuwanan/xianyu-Plus/releases/latest
+UPDATE_RELEASE_API=https://api.github.com/repos/najiuwanan511/xianyu-Plus/releases/latest
 EOF
 chmod 0600 /etc/xianyu-plus/update-agent.env
 

@@ -271,7 +271,7 @@ git pull origin main
 首次安装仍使用：
 
 ```bash
-git clone https://github.com/najiuwanan/xianyu-Plus.git
+git clone https://github.com/najiuwanan511/xianyu-Plus.git
 cd xianyu-Plus
 chmod +x install.sh
 ./install.sh

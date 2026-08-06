@@ -16,7 +16,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: najiuwanan/xianyu-plus
+  IMAGE_NAME: najiuwanan511/xianyu-plus
 
 jobs:
   publish:

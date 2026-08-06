@@ -51,7 +51,7 @@ public class SystemUpdateService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
-    @Value("${UPDATE_GITHUB_REPOSITORY:najiuwanan/xianyu-Plus}")
+    @Value("${UPDATE_GITHUB_REPOSITORY:najiuwanan511/xianyu-Plus}")
     private String repository;
 
     @Value("${APP_GIT_SHA:unknown}")
