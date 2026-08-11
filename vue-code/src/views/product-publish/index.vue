@@ -196,7 +196,12 @@ const probe = async () => {
   if (form.title.trim().length < 2) return toast.warning('请先填写明确的商品标题')
   probing.value = true
   try {
-    const result = await checkPublishCapability({ accountId: selectedAccountId.value, title: form.title.trim() })
+    const result = await checkPublishCapability({
+      accountId: selectedAccountId.value,
+      title: form.title.trim(),
+      description: form.description.trim(),
+      images: images.value
+    })
     applySchema(result.data || null, false)
     if (supportsPublishForm(schema.value?.supportLevel)) {
       toast.success(schema.value?.supportLevel === 'SERVICE_FORM' ? '已识别拼单/助力服务表单，请完善服务字段' : '类目检测通过，可以继续填写发布信息')
@@ -370,6 +375,8 @@ const refreshDependentProperties = async () => {
     const result = await checkPublishCapability({
       accountId: selectedAccountId.value,
       title: form.title.trim(),
+      description: form.description.trim(),
+      images: images.value,
       properties: propertyPayload()
     })
     applySchema(result.data || null, true)
@@ -429,7 +436,12 @@ const prepareBatch = async () => {
   batchStates.value = states
   for (const state of states) {
     try {
-      const capability = await checkPublishCapability({ accountId: state.accountId, title: form.title.trim() })
+      const capability = await checkPublishCapability({
+        accountId: state.accountId,
+        title: form.title.trim(),
+        description: state.description || form.description.trim(),
+        images: images.value
+      })
       const accountSchema = capability.data
       if (!accountSchema || !supportsPublishForm(accountSchema.supportLevel) || !accountSchema.locationApiReady || accountSchema.dependentPropertyCount > 0) {
         throw new Error(accountSchema?.supportLabel || '该账号未通过发布能力检测')

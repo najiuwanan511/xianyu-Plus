@@ -42,10 +42,16 @@ public class PublishCapabilityProbeService {
     }
 
     public PublishCapabilityCheckRespDTO check(Long accountId, String title) {
-        return check(accountId, title, List.of());
+        return check(accountId, title, title, List.of(), List.of());
     }
 
     public PublishCapabilityCheckRespDTO check(Long accountId, String title,
+                                                List<ProductPublishReqDTO.PropertySelection> selections) {
+        return check(accountId, title, title, List.of(), selections);
+    }
+
+    public PublishCapabilityCheckRespDTO check(Long accountId, String title, String description,
+                                                List<ProductPublishReqDTO.Image> images,
                                                 List<ProductPublishReqDTO.PropertySelection> selections) {
         PublishCapabilityCheckRespDTO response = new PublishCapabilityCheckRespDTO();
         response.setStatus("FAIL");
@@ -66,36 +72,57 @@ public class PublishCapabilityProbeService {
         String probeTitle = title == null || title.isBlank()
                 ? "iPhone 15 Pro 256G 原装二手手机"
                 : title.trim();
+        String probeDescription = description == null || description.isBlank()
+                ? probeTitle
+                : description.trim();
 
         Map<String, Object> categoryRequest = new LinkedHashMap<>();
-        categoryRequest.put("title", probeTitle);
         categoryRequest.put("lockCpv", false);
         categoryRequest.put("multiSKU", false);
         categoryRequest.put("publishScene", "mainPublish");
         categoryRequest.put("scene", "newPublishChoice");
-        categoryRequest.put("description", probeTitle);
-        categoryRequest.put("imageInfos", Collections.emptyList());
-        categoryRequest.put("itemLabelExtList", selectedLabels(selections));
-        categoryRequest.put("uniqueCode", String.valueOf(System.currentTimeMillis()));
-
-        XianyuApiCallUtils.ApiCallResult categoryResult = apiCallUtils.callApiWithRetry(
-                accountId, CATEGORY_API, categoryRequest, cookie, "2.0", null, null);
-        if (!categoryResult.isSuccess()) {
-            return failed(response, "类目接口检测失败", safeError(categoryResult));
+        categoryRequest.put("description", probeDescription);
+        categoryRequest.put("imageInfos", imageInfos(images));
+        List<Map<String, Object>> labels = selectedLabels(selections);
+        if (!labels.isEmpty()) {
+            categoryRequest.put("itemLabelExtList", labels);
         }
 
-        Map<String, Object> categoryData = categoryResult.extractData();
-        Map<String, Object> prediction = firstMap(categoryData == null ? null : categoryData.get("categoryPredictResult"));
-        String categoryId = text(prediction.get("catId"));
+        Map<String, Object> categoryData = null;
+        Map<String, Object> prediction = Collections.emptyMap();
+        XianyuApiCallUtils.ApiCallResult categoryResult = null;
+        List<String> recommendationTexts = probeTitle.equals(probeDescription)
+                ? List.of(probeTitle)
+                : List.of(probeTitle, probeDescription);
+        for (String recommendationText : recommendationTexts) {
+            categoryRequest.put("title", recommendationText);
+            categoryRequest.put("uniqueCode", String.valueOf(System.currentTimeMillis()));
+            categoryResult = apiCallUtils.callApiWithRetry(
+                    accountId, CATEGORY_API, categoryRequest, cookie, "2.0", null,
+                    Map.of("type", "originaljson", "spm_cnt", "a21ybx.publish.0.0"));
+            if (!categoryResult.isSuccess()) {
+                return failed(response, "类目接口检测失败", safeError(categoryResult));
+            }
+            categoryData = categoryResult.extractData();
+            prediction = findCategory(categoryData == null ? null : categoryData.get("categoryPredictResult"));
+            if (prediction.isEmpty()) {
+                prediction = findCategory(categoryData);
+            }
+            if (!firstText(prediction, "catId", "cid", "categoryId").isBlank()) {
+                break;
+            }
+        }
+
+        String categoryId = firstText(prediction, "catId", "cid", "categoryId");
         if (categoryId.isBlank()) {
             return failed(response, "类目接口未返回有效分类", "登录态可访问接口，但没有识别出商品类目；可更换更明确的商品标题后重试。");
         }
 
         response.setCategoryApiReady(true);
         response.setCategoryId(categoryId);
-        response.setCategoryName(text(prediction.get("catName")));
-        response.setChannelCategoryId(text(prediction.get("channelCatId")));
-        response.setTaobaoCategoryId(text(prediction.get("tbCatId")));
+        response.setCategoryName(firstText(prediction, "catName", "categoryName", "name"));
+        response.setChannelCategoryId(firstText(prediction, "channelCatId", "channelCid"));
+        response.setTaobaoCategoryId(firstText(prediction, "tbCatId", "tbCid"));
         response.setProperties(parseProperties(categoryData == null ? null : categoryData.get("cardList")));
         response.setPropertyCount(response.getProperties().size());
         response.setDynamicPropertiesReady(!response.getProperties().isEmpty());
@@ -166,6 +193,30 @@ public class PublishCapabilityProbeService {
             labels.add(label);
         }
         return labels;
+    }
+
+    private List<Map<String, Object>> imageInfos(List<ProductPublishReqDTO.Image> images) {
+        if (images == null || images.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int index = 0; index < Math.min(images.size(), 3); index++) {
+            ProductPublishReqDTO.Image image = images.get(index);
+            if (image == null || text(image.getUrl()).isBlank()) {
+                continue;
+            }
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("url", image.getUrl());
+            info.put("heightSize", image.getHeight() == null ? 0 : image.getHeight());
+            info.put("widthSize", image.getWidth() == null ? 0 : image.getWidth());
+            info.put("major", index == 0);
+            info.put("type", 0);
+            info.put("status", "done");
+            info.put("isQrCode", false);
+            info.put("extraInfo", Map.of("isH", "false", "isT", "false", "raw", "false"));
+            result.add(info);
+        }
+        return result;
     }
 
     private List<PublishCapabilityCheckRespDTO.Property> parseProperties(Object rawCards) {
@@ -301,6 +352,9 @@ public class PublishCapabilityProbeService {
     }
 
     private String firstText(Map<String, Object> map, String... keys) {
+        if (map == null) {
+            return "";
+        }
         for (String key : keys) {
             String value = text(map.get(key));
             if (!value.isBlank()) {
@@ -347,14 +401,24 @@ public class PublishCapabilityProbeService {
         return Collections.emptyMap();
     }
 
-    private Map<String, Object> firstMap(Object value) {
-        Map<String, Object> map = asMap(value);
-        if (!map.isEmpty()) return map;
+    private Map<String, Object> findCategory(Object value) {
         if (value instanceof List<?> list) {
             for (Object item : list) {
-                map = asMap(item);
-                if (!map.isEmpty()) return map;
+                Map<String, Object> category = findCategory(item);
+                if (!category.isEmpty()) return category;
             }
+            return Collections.emptyMap();
+        }
+        Map<String, Object> map = asMap(value);
+        if (map.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        if (!firstText(map, "catId", "cid", "categoryId").isBlank()) {
+            return map;
+        }
+        for (Object child : map.values()) {
+            Map<String, Object> category = findCategory(child);
+            if (!category.isEmpty()) return category;
         }
         return Collections.emptyMap();
     }

@@ -79,7 +79,13 @@ export function getSystemCheckOverview() {
   })
 }
 
-export function checkPublishCapability(data: { accountId: number; title: string; properties?: PublishCapabilitySelection[] }) {
+export function checkPublishCapability(data: {
+  accountId: number
+  title: string
+  description?: string
+  images?: Array<{ url: string; width: number; height: number }>
+  properties?: PublishCapabilitySelection[]
+}) {
   return request<PublishCapabilityResult>({
     url: '/system-check/publish-capability',
     method: 'POST',

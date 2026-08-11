@@ -35,6 +35,7 @@ public class SystemCheckController {
     public ResultObject<PublishCapabilityCheckRespDTO> publishCapability(
             @RequestBody PublishCapabilityCheckReqDTO request) {
         return ResultObject.success(publishCapabilityProbeService.check(
-                request.getAccountId(), request.getTitle(), request.getProperties()));
+                request.getAccountId(), request.getTitle(), request.getDescription(),
+                request.getImages(), request.getProperties()));
     }
 }

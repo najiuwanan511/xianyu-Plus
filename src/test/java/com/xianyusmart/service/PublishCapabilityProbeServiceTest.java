@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
@@ -61,7 +62,7 @@ class PublishCapabilityProbeServiceTest {
                 {"ret":["SUCCESS::调用成功"],"data":{"commonAddresses":[{"divisionId":"310101","city":"上海"}]}}
                 """;
         when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.CATEGORY_API), any(Map.class),
-                any(String.class), eq("2.0"), eq(null), eq(null)))
+                any(String.class), eq("2.0"), eq(null), any(Map.class)))
                 .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, categoryResponse, null, false));
         when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))
@@ -103,7 +104,7 @@ class PublishCapabilityProbeServiceTest {
                 {"ret":["SUCCESS::调用成功"],"data":{"commonAddresses":[{"divisionId":"310101"}]}}
                 """;
         when(apiCallUtils.callApiWithRetry(eq(8L), eq(PublishCapabilityProbeService.CATEGORY_API), any(Map.class),
-                any(String.class), eq("2.0"), eq(null), eq(null)))
+                any(String.class), eq("2.0"), eq(null), any(Map.class)))
                 .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, categoryResponse, null, false));
         when(apiCallUtils.callApiWithRetry(eq(8L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))
@@ -140,7 +141,7 @@ class PublishCapabilityProbeServiceTest {
                 {"ret":["SUCCESS::调用成功"],"data":{"commonAddresses":[{"divisionId":"310101"}]}}
                 """;
         when(apiCallUtils.callApiWithRetry(eq(9L), eq(PublishCapabilityProbeService.CATEGORY_API), any(Map.class),
-                any(String.class), eq("2.0"), eq(null), eq(null)))
+                any(String.class), eq("2.0"), eq(null), any(Map.class)))
                 .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, categoryResponse, null, false));
         when(apiCallUtils.callApiWithRetry(eq(9L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))
@@ -174,7 +175,7 @@ class PublishCapabilityProbeServiceTest {
                 {"ret":["SUCCESS"],"data":{"commonAddresses":[{"divisionId":"310101"}]}}
                 """;
         when(apiCallUtils.callApiWithRetry(eq(10L), eq(PublishCapabilityProbeService.CATEGORY_API), any(Map.class),
-                any(String.class), eq("2.0"), eq(null), eq(null)))
+                any(String.class), eq("2.0"), eq(null), any(Map.class)))
                 .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, categoryResponse, null, false));
         when(apiCallUtils.callApiWithRetry(eq(10L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))
@@ -191,12 +192,64 @@ class PublishCapabilityProbeServiceTest {
         assertEquals("SERVICE_FORM", result.getSupportLevel());
         assertEquals(0, result.getDependentPropertyCount());
         ArgumentCaptor<Map<String, Object>> request = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, String>> query = ArgumentCaptor.forClass(Map.class);
         verify(apiCallUtils).callApiWithRetry(eq(10L), eq(PublishCapabilityProbeService.CATEGORY_API), request.capture(),
-                any(String.class), eq("2.0"), eq(null), eq(null));
+                any(String.class), eq("2.0"), eq(null), query.capture());
         List<?> labels = (List<?>) request.getValue().get("itemLabelExtList");
         assertEquals(1, labels.size());
         assertEquals("分类", ((Map<?, ?>) labels.get(0)).get("propertyName"));
         assertEquals("拼单/助力", ((Map<?, ?>) labels.get(0)).get("text"));
+        assertEquals("a21ybx.publish.0.0", query.getValue().get("spm_cnt"));
+    }
+
+    @Test
+    void shouldRetryWithDescriptionAndFindNestedCategoryAliases() {
+        XianyuAccount account = new XianyuAccount();
+        account.setId(11L);
+        when(accountMapper.selectById(11L)).thenReturn(account);
+        when(accountService.getCookieByAccountId(11L)).thenReturn("_m_h5_tk=token_exp; unb=buyer");
+        String emptyCategoryResponse = """
+                {"ret":["SUCCESS"],"data":{"categoryPredictResult":[],"cardList":[]}}
+                """;
+        String nestedCategoryResponse = """
+                {"ret":["SUCCESS"],"data":{
+                  "result":{"recommendation":{"categoryId":"service-1","categoryName":"拼单/助力","channelCid":"100","tbCid":"200"}},
+                  "cardList":[
+                    {"cardData":{"propertyId":"1","propertyName":"交付周期","required":true,"valuesList":[{"catName":"10分钟"}]}},
+                    {"cardData":{"propertyId":"2","propertyName":"服务类型","required":true,"valuesList":[{"catName":"助力"}]}},
+                    {"cardData":{"propertyId":"3","propertyName":"计价方式","required":true,"valuesList":[{"catName":"元/次"}]}}
+                  ]
+                }}
+                """;
+        String locationResponse = """
+                {"ret":["SUCCESS"],"data":{"commonAddresses":[{"divisionId":"310101"}]}}
+                """;
+        when(apiCallUtils.callApiWithRetry(eq(11L), eq(PublishCapabilityProbeService.CATEGORY_API), any(Map.class),
+                any(String.class), eq("2.0"), eq(null), any(Map.class)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, emptyCategoryResponse, null, false))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, nestedCategoryResponse, null, false));
+        when(apiCallUtils.callApiWithRetry(eq(11L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
+                any(String.class), eq("1.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, locationResponse, null, false));
+        ProductPublishReqDTO.Image image = new ProductPublishReqDTO.Image();
+        image.setUrl("https://img.alicdn.com/test.jpg");
+        image.setWidth(800);
+        image.setHeight(600);
+
+        PublishCapabilityCheckRespDTO result = service.check(11L, "爷爷不泡茶助力",
+                "爷爷不泡茶奶茶拼单助力服务", List.of(image), List.of());
+
+        assertEquals("service-1", result.getCategoryId());
+        assertEquals("拼单/助力", result.getCategoryName());
+        assertEquals("100", result.getChannelCategoryId());
+        assertEquals("200", result.getTaobaoCategoryId());
+        assertEquals("SERVICE_FORM", result.getSupportLevel());
+        ArgumentCaptor<Map<String, Object>> request = ArgumentCaptor.forClass(Map.class);
+        verify(apiCallUtils, times(2)).callApiWithRetry(eq(11L), eq(PublishCapabilityProbeService.CATEGORY_API),
+                request.capture(), any(String.class), eq("2.0"), eq(null), any(Map.class));
+        assertFalse(request.getAllValues().get(0).containsKey("itemLabelExtList"));
+        assertEquals("爷爷不泡茶奶茶拼单助力服务", request.getAllValues().get(1).get("title"));
+        assertEquals(1, ((List<?>) request.getAllValues().get(1).get("imageInfos")).size());
     }
 
     @Test
