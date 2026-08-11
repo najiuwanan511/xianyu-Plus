@@ -11,14 +11,23 @@ export interface ProductPublishProperty {
   valueKey: string
 }
 
+export interface ProductPublishSkuSpec {
+  name: string
+  price: number
+  originalPrice?: number
+  quantity: number
+}
+
 export interface ProductPublishRequest {
   accountId: number
   requestId: string
   title: string
   description: string
-  price: number
+  price?: number
   originalPrice?: number
-  quantity: number
+  quantity?: number
+  skuPropertyName?: string
+  skuSpecs?: ProductPublishSkuSpec[]
   deliveryMode: 'FREE' | 'FLAT' | 'NONE' | 'SELF_PICKUP'
   postFee?: number
   acknowledged: boolean

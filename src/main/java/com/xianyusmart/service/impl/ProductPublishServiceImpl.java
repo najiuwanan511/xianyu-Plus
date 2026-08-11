@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.HashSet;
@@ -142,10 +143,14 @@ public class ProductPublishServiceImpl implements ProductPublishService {
         if (description.length() < 2 || description.length() > 5000) {
             throw new BusinessException(400, "商品描述请填写 2 到 5000 个字符");
         }
-        validateMoney(request.getPrice(), "售价", true);
-        validateMoney(request.getOriginalPrice(), "原价", false);
-        if (request.getQuantity() == null || request.getQuantity() < 1 || request.getQuantity() > 999) {
-            throw new BusinessException(400, "库存数量必须在 1 到 999 之间");
+        if (hasSkuSpecs(request)) {
+            validateSkuSpecs(request);
+        } else {
+            validateMoney(request.getPrice(), "售价", true);
+            validateMoney(request.getOriginalPrice(), "原价", false);
+            if (request.getQuantity() == null || request.getQuantity() < 1 || request.getQuantity() > 999) {
+                throw new BusinessException(400, "库存数量必须在 1 到 999 之间");
+            }
         }
         if (!DELIVERY_MODES.contains(request.getDeliveryMode())) {
             throw new BusinessException(400, "请选择有效的交付方式");
@@ -168,6 +173,42 @@ public class ProductPublishServiceImpl implements ProductPublishService {
         }
         if (value.compareTo(BigDecimal.ZERO) < (required ? 1 : 0) || value.compareTo(new BigDecimal("9999999")) > 0) {
             throw new BusinessException(400, field + "金额不正确");
+        }
+    }
+
+    private boolean hasSkuSpecs(ProductPublishReqDTO request) {
+        return request.getSkuSpecs() != null && !request.getSkuSpecs().isEmpty();
+    }
+
+    private void validateSkuSpecs(ProductPublishReqDTO request) {
+        List<ProductPublishReqDTO.SkuSpec> specs = request.getSkuSpecs();
+        if (specs.size() < 2 || specs.size() > 20) {
+            throw new BusinessException(400, "多规格商品需要填写 2 到 20 个规格");
+        }
+        String propertyName = trim(request.getSkuPropertyName());
+        if (propertyName.isBlank() || propertyName.length() > 30) {
+            throw new BusinessException(400, "规格名称需要在 1 到 30 个字符之间");
+        }
+        Set<String> names = new HashSet<>();
+        int totalQuantity = 0;
+        for (ProductPublishReqDTO.SkuSpec spec : specs) {
+            if (spec == null) throw new BusinessException(400, "规格信息不完整");
+            String name = trim(spec.getName());
+            if (name.isBlank() || name.length() > 50) {
+                throw new BusinessException(400, "规格选项需要在 1 到 50 个字符之间");
+            }
+            if (!names.add(name.toLowerCase(Locale.ROOT))) {
+                throw new BusinessException(400, "规格选项不能重复：" + name);
+            }
+            validateMoney(spec.getPrice(), "规格“" + name + "”售价", true);
+            validateMoney(spec.getOriginalPrice(), "规格“" + name + "”原价", false);
+            if (spec.getQuantity() == null || spec.getQuantity() < 1 || spec.getQuantity() > 999) {
+                throw new BusinessException(400, "规格“" + name + "”库存必须在 1 到 999 之间");
+            }
+            totalQuantity += spec.getQuantity();
+            if (totalQuantity > 999) {
+                throw new BusinessException(400, "多规格商品总库存不能超过 999");
+            }
         }
     }
 
@@ -366,10 +407,15 @@ public class ProductPublishServiceImpl implements ProductPublishService {
 
     private Map<String, Object> buildPayload(ProductPublishReqDTO request, PublishCapabilityCheckRespDTO schema,
                                              List<Map<String, Object>> labels, Map<String, Object> location) {
+        boolean skuMode = hasSkuSpecs(request);
+        BigDecimal listingPrice = skuMode ? request.getSkuSpecs().stream()
+                .map(ProductPublishReqDTO.SkuSpec::getPrice).min(BigDecimal::compareTo).orElseThrow() : request.getPrice();
+        int listingQuantity = skuMode ? request.getSkuSpecs().stream()
+                .mapToInt(ProductPublishReqDTO.SkuSpec::getQuantity).sum() : request.getQuantity();
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("freebies", false);
         payload.put("itemTypeStr", "b");
-        payload.put("quantity", String.valueOf(request.getQuantity()));
+        payload.put("quantity", String.valueOf(listingQuantity));
         payload.put("simpleItem", "true");
         List<Map<String, Object>> images = new ArrayList<>();
         for (int i = 0; i < request.getImages().size(); i++) {
@@ -389,9 +435,12 @@ public class ProductPublishServiceImpl implements ProductPublishService {
         payload.put("itemTextDTO", Map.of("desc", trim(request.getDescription()), "title", trim(request.getTitle()), "titleDescSeparate", true));
         payload.put("itemLabelExtList", labels);
         Map<String, Object> price = new LinkedHashMap<>();
-        price.put("priceInCent", cents(request.getPrice()));
-        if (request.getOriginalPrice() != null) price.put("origPriceInCent", cents(request.getOriginalPrice()));
+        price.put("priceInCent", cents(listingPrice));
+        if (!skuMode && request.getOriginalPrice() != null) price.put("origPriceInCent", cents(request.getOriginalPrice()));
         payload.put("itemPriceDTO", price);
+        if (skuMode) {
+            payload.put("itemSkuList", buildSkuList(request));
+        }
         payload.put("userRightsProtocols", List.of(Map.of("enable", false, "serviceCode", "SKILL_PLAY_NO_MIND")));
         payload.put("itemPostFeeDTO", postFee(request));
         payload.put("itemAddrDTO", Map.of(
@@ -407,6 +456,27 @@ public class ProductPublishServiceImpl implements ProductPublishService {
         payload.put("bizcode", "pcMainPublish");
         payload.put("publishScene", "pcMainPublish");
         return payload;
+    }
+
+    private List<Map<String, Object>> buildSkuList(ProductPublishReqDTO request) {
+        String propertyName = trim(request.getSkuPropertyName());
+        List<Map<String, Object>> skuList = new ArrayList<>();
+        for (int index = 0; index < request.getSkuSpecs().size(); index++) {
+            ProductPublishReqDTO.SkuSpec spec = request.getSkuSpecs().get(index);
+            Map<String, Object> property = new LinkedHashMap<>();
+            property.put("propertyText", propertyName);
+            property.put("valueText", trim(spec.getName()));
+            property.put("propertySortOrder", 0);
+            property.put("valueSortOrder", index);
+
+            Map<String, Object> sku = new LinkedHashMap<>();
+            sku.put("priceInCent", cents(spec.getPrice()));
+            if (spec.getOriginalPrice() != null) sku.put("origPriceInCent", cents(spec.getOriginalPrice()));
+            sku.put("quantity", String.valueOf(spec.getQuantity()));
+            sku.put("propertyList", List.of(property));
+            skuList.add(sku);
+        }
+        return skuList;
     }
 
     private Map<String, Object> postFee(ProductPublishReqDTO request) {

@@ -16,6 +16,9 @@ public class ProductPublishReqDTO {
     private BigDecimal price;
     private BigDecimal originalPrice;
     private Integer quantity = 1;
+    /** Optional single-dimension SKU rows used for multi-specification publishing. */
+    private String skuPropertyName;
+    private List<SkuSpec> skuSpecs = new ArrayList<>();
     /** FREE、FLAT、NONE、SELF_PICKUP。 */
     private String deliveryMode;
     private BigDecimal postFee;
@@ -37,6 +40,14 @@ public class ProductPublishReqDTO {
         private String propertyId;
         /** 对应 valueId；接口没有 valueId 时使用选项名称。 */
         private String valueKey;
+    }
+
+    @Data
+    public static class SkuSpec {
+        private String name;
+        private BigDecimal price;
+        private BigDecimal originalPrice;
+        private Integer quantity;
     }
 
     @Data

@@ -69,6 +69,54 @@ class ProductPublishServiceImplTest {
     }
 
     @Test
+    void shouldPublishEachSpecificationAsAPlatformSku() {
+        ProductPublishReqDTO request = request();
+        request.setPrice(null);
+        request.setQuantity(null);
+        request.setSkuPropertyName("套餐");
+        request.setSkuSpecs(List.of(sku("月卡", "2.50", 2), sku("年卡", "1.00", 1)));
+        when(probeService.check(7L, request.getTitle())).thenReturn(generalSchema());
+        when(accountService.getCookieByAccountId(7L)).thenReturn("_m_h5_tk=token_exp");
+        when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
+                any(String.class), eq("1.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true,
+                        "{\"ret\":[\"SUCCESS\"],\"data\":{\"commonAddresses\":[{\"divisionId\":\"310115\",\"city\":\"上海\"}]}}",
+                        null, false));
+        when(apiCallUtils.callApiWithRetry(eq(7L), eq(ProductPublishServiceImpl.PUBLISH_API), any(Map.class),
+                any(String.class), eq("1.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true,
+                        "{\"ret\":[\"SUCCESS\"],\"data\":{\"itemId\":\"sku-1\"}}", null, false));
+
+        service.publish(request);
+
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(apiCallUtils).callApiWithRetry(eq(7L), eq(ProductPublishServiceImpl.PUBLISH_API), payload.capture(),
+                any(String.class), eq("1.0"), eq(null), eq(null));
+        assertEquals("100", ((Map<?, ?>) payload.getValue().get("itemPriceDTO")).get("priceInCent"));
+        assertEquals("3", payload.getValue().get("quantity"));
+        List<?> skus = (List<?>) payload.getValue().get("itemSkuList");
+        assertEquals(2, skus.size());
+        Map<?, ?> firstSku = (Map<?, ?>) skus.get(0);
+        assertEquals("250", firstSku.get("priceInCent"));
+        assertEquals("2", firstSku.get("quantity"));
+        Map<?, ?> property = (Map<?, ?>) ((List<?>) firstSku.get("propertyList")).get(0);
+        assertEquals("套餐", property.get("propertyText"));
+        assertEquals("月卡", property.get("valueText"));
+    }
+
+    @Test
+    void shouldRejectDuplicateSpecificationBeforeAnyNetworkCall() {
+        ProductPublishReqDTO request = request();
+        request.setSkuPropertyName("套餐");
+        request.setSkuSpecs(List.of(sku("月卡", "1.00", 1), sku(" 月卡 ", "2.00", 1)));
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.publish(request));
+
+        assertTrue(exception.getMessage().contains("不能重复"));
+        verify(probeService, never()).check(any(), any());
+    }
+
+    @Test
     void shouldRejectSpecialCategoryBeforePublishApi() {
         ProductPublishReqDTO request = request();
         PublishCapabilityCheckRespDTO schema = generalSchema();
@@ -234,5 +282,13 @@ class ProductPublishServiceImplTest {
         selection.setPropertyId(propertyId);
         selection.setValueKey(valueKey);
         return selection;
+    }
+
+    private ProductPublishReqDTO.SkuSpec sku(String name, String price, int quantity) {
+        ProductPublishReqDTO.SkuSpec spec = new ProductPublishReqDTO.SkuSpec();
+        spec.setName(name);
+        spec.setPrice(new BigDecimal(price));
+        spec.setQuantity(quantity);
+        return spec;
     }
 }

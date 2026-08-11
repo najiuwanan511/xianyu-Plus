@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getAccountList } from '@/api/account'
 import { uploadImage } from '@/api/image'
-import { getPublishLocations, publishProduct, type ProductPublishImage, type ProductPublishLocation, type ProductPublishProperty } from '@/api/product-publish'
+import { getPublishLocations, publishProduct, type ProductPublishImage, type ProductPublishLocation, type ProductPublishProperty, type ProductPublishSkuSpec } from '@/api/product-publish'
 import { generateProductCopywriting, getProductMaterial, saveProductMaterial } from '@/api/product-material'
 import { checkPublishCapability, type PublishCapabilityResult } from '@/api/system-check'
 import type { Account } from '@/types'
@@ -66,9 +66,14 @@ const form = reactive({
   price: 0,
   originalPrice: 0,
   quantity: 1,
+  specificationMode: false,
+  skuPropertyName: '规格',
   deliveryMode: 'FREE' as 'FREE' | 'FLAT' | 'NONE' | 'SELF_PICKUP',
   postFee: 0
 })
+const skuSpecs = ref<ProductPublishSkuSpec[]>([
+  { name: '', price: 0, quantity: 1 }
+])
 
 const supportsPublishForm = (supportLevel?: string) => supportLevel === 'GENERAL_FORM' || supportLevel === 'SERVICE_FORM'
 
@@ -78,17 +83,34 @@ const requiredPropertiesReady = computed(() => (schema.value?.properties || []).
   const value = selectedProperties.value[propertyKey(property)]
   return Array.isArray(value) ? value.length > 0 : Boolean(value)
 }))
+const specificationReady = computed(() => {
+  if (!form.specificationMode) return form.price > 0 && form.quantity >= 1 && form.quantity <= 999
+  const names = new Set<string>()
+  let totalQuantity = 0
+  if (!form.skuPropertyName.trim() || skuSpecs.value.length < 2 || skuSpecs.value.length > 20) return false
+  for (const spec of skuSpecs.value) {
+    const name = spec.name.trim().toLowerCase()
+    if (!name || names.has(name) || spec.price <= 0 || spec.quantity < 1 || spec.quantity > 999) return false
+    names.add(name)
+    totalQuantity += spec.quantity
+  }
+  return totalQuantity <= 999
+})
+const listingPrice = computed(() => form.specificationMode
+  ? Math.min(...skuSpecs.value.map(spec => Number(spec.price) || Number.MAX_SAFE_INTEGER))
+  : form.price)
+const specificationTotalQuantity = computed(() => skuSpecs.value.reduce((total, spec) => total + (Number(spec.quantity) || 0), 0))
 const canPublish = computed(() => Boolean(
   selectedAccountId.value && supportsPublishForm(schema.value?.supportLevel) && schema.value.locationApiReady &&
   schema.value.dependentPropertyCount === 0 &&
   requiredPropertiesReady.value &&
   images.value.length && selectedLocationKey.value && form.title.trim().length >= 2 && form.description.trim().length >= 2 &&
-  form.price > 0 && acknowledged.value && !publishing.value
+  specificationReady.value && acknowledged.value && !publishing.value
 ))
 const canBatchPublish = computed(() => Boolean(batchMode.value && targetAccountIds.value.length > 1 &&
   batchStates.value.length === targetAccountIds.value.length &&
   batchStates.value.every(state => state.status === 'READY' && state.locationKey) &&
-  images.value.length && form.title.trim().length >= 2 && form.description.trim().length >= 2 && form.price > 0 &&
+  images.value.length && form.title.trim().length >= 2 && form.description.trim().length >= 2 && specificationReady.value &&
   acknowledged.value && !publishing.value))
 const selectedLocation = computed(() => locations.value.find(location => location.key === selectedLocationKey.value) || null)
 const locationSourceLabel = (source: string) => ({ SELECTED: '平台默认', COMMON: '常用地址', NEARBY: '附近地点' }[source] || '平台地点')
@@ -149,8 +171,14 @@ watch(() => form.title, () => {
   }
   batchStates.value = []
 })
-watch([() => form.description, () => form.price, () => form.originalPrice, () => form.quantity, () => form.deliveryMode, () => form.postFee], () => {
+watch([() => form.description, () => form.price, () => form.originalPrice, () => form.quantity, () => form.specificationMode, () => form.skuPropertyName, () => form.deliveryMode, () => form.postFee], () => {
   batchStates.value = []
+})
+watch(skuSpecs, () => { batchStates.value = [] }, { deep: true })
+watch(() => form.specificationMode, enabled => {
+  if (enabled && skuSpecs.value.length < 2) {
+    skuSpecs.value.push({ name: '', price: 0, quantity: 1 })
+  }
 })
 watch(selectedProperties, () => { batchStates.value = [] }, { deep: true })
 watch(images, () => { batchStates.value = [] }, { deep: true })
@@ -217,6 +245,23 @@ const uploadFiles = async (event: Event) => {
 
 const removeImage = (index: number) => images.value.splice(index, 1)
 
+const addSkuSpec = () => {
+  if (skuSpecs.value.length >= 20) return toast.warning('最多可添加 20 个规格')
+  skuSpecs.value.push({ name: '', price: 0, quantity: 1 })
+}
+
+const removeSkuSpec = (index: number) => {
+  if (skuSpecs.value.length <= 2) return toast.warning('多规格商品至少保留 2 个规格')
+  skuSpecs.value.splice(index, 1)
+}
+
+const skuSpecsPayload = () => skuSpecs.value.map(spec => ({
+  name: spec.name.trim(),
+  price: Number(spec.price),
+  originalPrice: Number(spec.originalPrice) > 0 ? Number(spec.originalPrice) : undefined,
+  quantity: Number(spec.quantity)
+}))
+
 const loadMaterial = async (id: number) => {
   const result = await getProductMaterial(id)
   const material = result.data
@@ -236,6 +281,7 @@ const loadMaterial = async (id: number) => {
 const saveMaterial = async () => {
   if (!materialName.value.trim()) return toast.warning('请先填写素材名称')
   if (form.title.trim().length < 2) return toast.warning('请先填写商品标题')
+  if (form.specificationMode) return toast.warning('多规格商品暂不支持保存为发布素材')
   savingMaterial.value = true
   try {
     const result = await saveProductMaterial({
@@ -267,7 +313,7 @@ const runAi = async (mode: 'GENERATE' | 'POLISH') => {
       description: form.description.trim(),
       style: aiStyle.value,
       facts: aiFacts.value.trim(),
-      price: form.price > 0 ? form.price : undefined,
+      price: listingPrice.value > 0 ? listingPrice.value : undefined,
       images: images.value
     })
     if (result.data?.description) {
@@ -366,7 +412,7 @@ const generateVariations = async () => {
     try {
       const result = await generateProductCopywriting({
         mode: 'VARIATION', title: form.title.trim(), description: form.description.trim(), style: aiStyle.value,
-        facts: aiFacts.value.trim(), price: form.price, variationIndex: index + 1, images: images.value
+        facts: aiFacts.value.trim(), price: listingPrice.value, variationIndex: index + 1, images: images.value
       })
       state.description = result.data?.description || form.description.trim()
       state.message = '预检通过，已生成差异化描述'
@@ -388,7 +434,11 @@ const submitBatch = async () => {
     try {
       const result = await publishProduct({
         accountId: state.accountId, requestId: createRequestId(), title: form.title.trim(), description: state.description,
-        price: form.price, originalPrice: form.originalPrice > 0 ? form.originalPrice : undefined, quantity: form.quantity,
+        price: form.specificationMode ? undefined : form.price,
+        originalPrice: !form.specificationMode && form.originalPrice > 0 ? form.originalPrice : undefined,
+        quantity: form.specificationMode ? undefined : form.quantity,
+        skuPropertyName: form.specificationMode ? form.skuPropertyName.trim() : undefined,
+        skuSpecs: form.specificationMode ? skuSpecsPayload() : undefined,
         deliveryMode: form.deliveryMode, postFee: form.deliveryMode === 'FLAT' ? form.postFee : undefined,
         acknowledged: true,
         address: { locationKey: state.locationKey }, images: images.value, properties: state.properties
@@ -420,9 +470,11 @@ const submit = async () => {
       requestId: requestId.value,
       title: form.title.trim(),
       description: form.description.trim(),
-      price: form.price,
-      originalPrice: form.originalPrice > 0 ? form.originalPrice : undefined,
-      quantity: form.quantity,
+      price: form.specificationMode ? undefined : form.price,
+      originalPrice: !form.specificationMode && form.originalPrice > 0 ? form.originalPrice : undefined,
+      quantity: form.specificationMode ? undefined : form.quantity,
+      skuPropertyName: form.specificationMode ? form.skuPropertyName.trim() : undefined,
+      skuSpecs: form.specificationMode ? skuSpecsPayload() : undefined,
       deliveryMode: form.deliveryMode,
       postFee: form.deliveryMode === 'FLAT' ? form.postFee : undefined,
       acknowledged: acknowledged.value,
@@ -534,10 +586,28 @@ onMounted(async () => {
         <div v-for="(image, index) in images" :key="image.url" class="image-card"><img :src="image.url"><button type="button" @click="removeImage(index)">×</button><small v-if="index === 0">主图</small></div>
         <label v-if="images.length < 9" class="image-add"><input type="file" accept="image/*" multiple :disabled="uploading" @change="uploadFiles"><strong>{{ uploading ? '上传中…' : '+ 添加图片' }}</strong><span>最多 9 张</span></label>
       </div>
-      <div class="form-grid pricing">
+      <div class="specification-switch">
+        <label><input v-model="form.specificationMode" type="checkbox"> 启用多规格</label>
+        <span v-if="form.specificationMode">商品显示最低价 {{ listingPrice > 0 && listingPrice < Number.MAX_SAFE_INTEGER ? listingPrice : '-' }} 元，总库存 {{ specificationTotalQuantity }}</span>
+      </div>
+      <div v-if="form.specificationMode" class="sku-editor">
+        <label class="sku-property-name"><span>规格名称</span><input v-model="form.skuPropertyName" maxlength="30" placeholder="例如：套餐"></label>
+        <div class="sku-editor__head"><span>规格选项</span><span>售价（元）</span><span>原价（可选）</span><span>库存</span><span></span></div>
+        <div v-for="(spec, index) in skuSpecs" :key="index" class="sku-editor__row">
+          <input v-model="spec.name" maxlength="50" placeholder="例如：月卡">
+          <input v-model.number="spec.price" type="number" min="0.01" step="0.01">
+          <input v-model.number="spec.originalPrice" type="number" min="0" step="0.01">
+          <input v-model.number="spec.quantity" type="number" min="1" max="999">
+          <button type="button" class="sku-editor__remove" :disabled="skuSpecs.length <= 2" title="删除规格" @click="removeSkuSpec(index)">×</button>
+        </div>
+        <button type="button" class="sku-editor__add" :disabled="skuSpecs.length >= 20" @click="addSkuSpec">添加规格</button>
+      </div>
+      <div v-else class="form-grid pricing">
         <label><span>售价（元）</span><input v-model.number="form.price" type="number" min="0.01" step="0.01"></label>
         <label><span>原价（可选）</span><input v-model.number="form.originalPrice" type="number" min="0" step="0.01"></label>
         <label><span>库存</span><input v-model.number="form.quantity" type="number" min="1" max="999"></label>
+      </div>
+      <div class="form-grid delivery-pricing">
         <label><span>交付方式</span><select v-model="form.deliveryMode"><option value="FREE">包邮</option><option value="FLAT">固定运费</option><option value="NONE">无需邮寄</option><option value="SELF_PICKUP">仅自提</option></select></label>
         <label v-if="form.deliveryMode === 'FLAT'"><span>运费（元）</span><input v-model.number="form.postFee" type="number" min="0" step="0.01"></label>
       </div>
@@ -584,4 +654,5 @@ onMounted(async () => {
 .location-button,.location-actions button{border:1px solid #b2ccff;border-radius:8px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.location-button:disabled,.location-actions button:disabled{opacity:.5;cursor:not-allowed}.location-help{margin:8px 0 12px;color:#667085;font-size:13px}.location-actions{display:flex;align-items:center;gap:12px;margin-bottom:12px}.location-actions span{color:#067647;font-size:12px}.location-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.location-list>label{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid #e4e7ec;border-radius:10px;cursor:pointer}.location-list>label.selected{border-color:#84adff;background:#f5f8ff}.location-list label>span{display:flex;min-width:0;flex-direction:column;gap:4px}.location-list strong{font-size:14px}.location-list small{color:#667085}.location-empty{padding:16px;border:1px dashed #fdb022;border-radius:9px;background:#fffaeb;color:#b54708}.custom-location{display:flex;flex-direction:column;gap:6px;margin-top:14px}.custom-location>span{font-size:12px;font-weight:700;color:#475467}.custom-location input{box-sizing:border-box;width:100%;border:1px solid #d0d5dd;border-radius:8px;padding:10px 11px}.custom-location small{color:#667085}.confirm-location{display:flex;flex-direction:column;gap:5px;padding:10px;border-radius:8px;background:#f2f4f7}.confirm-location span{font-size:12px;color:#667085}.confirm-location strong{font-size:13px}.confirm-card .confirm-location{grid-column:1/-1}@media(max-width:700px){.location-list{grid-template-columns:1fr}.location-actions{align-items:flex-start;flex-direction:column}}
 .header-actions{display:flex;align-items:center;gap:9px}.header-actions button,.material-bar button,.ai-buttons button,.batch-tools button{border:1px solid #b2ccff;border-radius:8px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.header-actions span{padding:7px 11px;border-radius:999px;background:#eef4ff;color:#3538cd;font-size:12px;font-weight:700}.material-bar{display:flex;align-items:end;gap:10px;margin-bottom:16px;padding:14px 18px;border:1px solid #d1e0ff;border-radius:12px;background:#f5f8ff}.material-bar label{display:flex;min-width:320px;flex-direction:column;gap:5px}.material-bar label span,.ai-panel label span,.batch-results label span{font-size:12px;font-weight:700;color:#475467}.material-bar input,.ai-panel select,.ai-panel textarea,.batch-results select,.batch-results textarea{box-sizing:border-box;width:100%;border:1px solid #d0d5dd;border-radius:8px;padding:9px;background:#fff}.material-bar small{color:#667085}.description-workspace{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,.6fr);gap:14px;align-items:stretch}.description-workspace>label{display:flex;flex-direction:column;gap:6px}.ai-panel{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid #d1e9ff;border-radius:10px;background:#f5fbff}.ai-panel>div:first-child{display:flex;flex-direction:column}.ai-panel>div:first-child small{color:#667085}.ai-panel label{display:flex;flex-direction:column;gap:5px}.ai-buttons{display:flex;gap:7px}.ai-buttons button{flex:1}.ai-buttons button:disabled,.batch-tools button:disabled{opacity:.5;cursor:not-allowed}.vision-ok{color:#067647}.vision-fallback{color:#b54708}.batch-card .section-title p{margin:5px 0;color:#667085;font-size:13px}.mode-switch{display:flex;align-items:center;gap:7px;font-weight:700}.account-checks{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}.account-checks label{padding:8px 11px;border:1px solid #d0d5dd;border-radius:999px;background:#fff}.batch-tools{display:flex;align-items:center;gap:9px}.batch-tools small{color:#667085}.batch-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.batch-results article{padding:13px;border:1px solid #e4e7ec;border-radius:10px}.batch-results article.status-ready,.batch-results article.status-published{border-color:#a6f4c5;background:#f6fef9}.batch-results article.status-failed{border-color:#fecdca;background:#fffbfa}.batch-result-head{display:flex;justify-content:space-between}.batch-result-head span{font-size:12px;font-weight:700}.batch-results p{margin:6px 0 10px;color:#667085;font-size:12px}.batch-results label{display:flex;flex-direction:column;gap:5px;margin-top:8px}.batch-results>article>small{color:#067647}@media(max-width:900px){.description-workspace,.batch-results{grid-template-columns:1fr}.material-bar{align-items:stretch;flex-direction:column}.material-bar label{min-width:0}.header-actions{align-items:flex-start;flex-direction:column}.batch-tools{align-items:stretch;flex-direction:column}}
 .level--service_form{background:#e0f2fe;color:#075985}.service-tip{margin:14px 0;padding:11px;border:1px solid #bae6fd;border-radius:8px;background:#f0f9ff;color:#075985;font-size:13px}
+.specification-switch{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;padding:10px 12px;border:1px solid #d1e0ff;border-radius:8px;background:#f5f8ff}.specification-switch label{display:flex;align-items:center;gap:7px;font-weight:700;color:#175cd3}.specification-switch span{font-size:12px;color:#475467}.sku-editor{padding:14px;border:1px solid #d0d5dd;border-radius:8px;background:#fff}.sku-property-name{display:flex;align-items:center;gap:10px;margin-bottom:12px}.sku-property-name span{min-width:56px;font-size:12px;font-weight:700;color:#475467}.sku-property-name input,.sku-editor__row input{box-sizing:border-box;width:100%;min-width:0;border:1px solid #d0d5dd;border-radius:7px;padding:9px 10px;color:#1d2939;outline:none}.sku-editor__head,.sku-editor__row{display:grid;grid-template-columns:minmax(150px,1.5fr) minmax(100px,1fr) minmax(100px,1fr) minmax(80px,.7fr) 32px;gap:9px;align-items:center}.sku-editor__head{padding:0 0 6px;font-size:12px;font-weight:700;color:#475467}.sku-editor__row{margin-top:8px}.sku-editor__remove{width:32px;height:32px;border:1px solid #fecdca;border-radius:7px;background:#fff;color:#b42318;font-size:20px;line-height:1;cursor:pointer}.sku-editor__remove:disabled{opacity:.45;cursor:not-allowed}.sku-editor__add{margin-top:12px;border:1px solid #b2ccff;border-radius:7px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.sku-editor__add:disabled{opacity:.5;cursor:not-allowed}.delivery-pricing{grid-template-columns:repeat(2,minmax(160px,220px));margin-top:14px}@media(max-width:700px){.specification-switch{align-items:flex-start;flex-direction:column}.sku-editor{overflow-x:auto}.sku-editor__head,.sku-editor__row{min-width:620px}.delivery-pricing{grid-template-columns:1fr}.sku-property-name{align-items:flex-start;flex-direction:column;gap:5px}.sku-property-name span{min-width:0}}
 </style>
