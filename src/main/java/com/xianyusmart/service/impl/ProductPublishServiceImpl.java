@@ -54,7 +54,7 @@ public class ProductPublishServiceImpl implements ProductPublishService {
             return completed;
         }
 
-        PublishCapabilityCheckRespDTO schema = probeService.check(request.getAccountId(), request.getTitle());
+        PublishCapabilityCheckRespDTO schema = probeService.check(request.getAccountId(), request.getTitle(), request.getProperties());
         if (!schema.isCategoryApiReady() || !schema.isLocationApiReady()) {
             throw new BusinessException(409, "发布前置检查未通过：" + schema.getSummary());
         }

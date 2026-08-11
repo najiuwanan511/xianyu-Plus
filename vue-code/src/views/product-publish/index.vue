@@ -20,6 +20,7 @@ const probing = ref(false)
 const publishing = ref(false)
 const uploading = ref(false)
 const schema = ref<PublishCapabilityResult | null>(null)
+const refreshingProperties = ref(false)
 const images = ref<ProductPublishImage[]>([])
 const locations = ref<ProductPublishLocation[]>([])
 const loadingLocations = ref(false)
@@ -27,6 +28,8 @@ const selectedLocationKey = ref('')
 const lookupCoordinates = ref<{ longitude: number; latitude: number } | null>(null)
 const customPoiName = ref('')
 const selectedProperties = ref<Record<string, string | string[]>>({})
+let skipPropertyRefresh = false
+let propertyRefreshTimer: ReturnType<typeof setTimeout> | undefined
 const acknowledged = ref(false)
 const createRequestId = () => globalThis.crypto?.randomUUID?.() ||
   'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
@@ -180,7 +183,12 @@ watch(() => form.specificationMode, enabled => {
     skuSpecs.value.push({ name: '', price: 0, quantity: 1 })
   }
 })
-watch(selectedProperties, () => { batchStates.value = [] }, { deep: true })
+watch(selectedProperties, () => {
+  batchStates.value = []
+  if (skipPropertyRefresh || !schema.value || !selectedAccountId.value || !form.title.trim()) return
+  if (propertyRefreshTimer) clearTimeout(propertyRefreshTimer)
+  propertyRefreshTimer = setTimeout(() => void refreshDependentProperties(), 250)
+}, { deep: true })
 watch(images, () => { batchStates.value = [] }, { deep: true })
 
 const probe = async () => {
@@ -189,13 +197,7 @@ const probe = async () => {
   probing.value = true
   try {
     const result = await checkPublishCapability({ accountId: selectedAccountId.value, title: form.title.trim() })
-    schema.value = result.data || null
-    const values: Record<string, string | string[]> = {}
-    for (const property of schema.value?.properties || []) {
-      const selected = property.options.filter(option => option.selected).map(option => option.valueId || option.valueName)
-      values[propertyKey(property)] = property.multiple ? selected : (selected[0] || '')
-    }
-    selectedProperties.value = values
+    applySchema(result.data || null, false)
     if (supportsPublishForm(schema.value?.supportLevel)) {
       toast.success(schema.value?.supportLevel === 'SERVICE_FORM' ? '已识别拼单/助力服务表单，请完善服务字段' : '类目检测通过，可以继续填写发布信息')
     } else {
@@ -331,10 +333,51 @@ const propertyPayload = (): ProductPublishProperty[] => {
   for (const property of schema.value?.properties || []) {
     const value = selectedProperties.value[propertyKey(property)]
     for (const item of Array.isArray(value) ? value : (value ? [value] : [])) {
-      payload.push({ propertyId: property.propertyId, valueKey: item })
+      const option = property.options.find(candidate => candidate.valueId === item || candidate.valueName === item)
+      payload.push({
+        propertyId: property.propertyId,
+        valueKey: item,
+        propertyName: property.propertyName,
+        valueName: option?.valueName || item,
+        channelCategoryId: option?.channelCategoryId,
+        taobaoCategoryId: option?.taobaoCategoryId
+      })
     }
   }
   return payload
+}
+
+const applySchema = (nextSchema: PublishCapabilityResult | null, preserveSelections: boolean) => {
+  skipPropertyRefresh = true
+  schema.value = nextSchema
+  const values: Record<string, string | string[]> = {}
+  for (const property of nextSchema?.properties || []) {
+    const key = propertyKey(property)
+    const previous = preserveSelections ? selectedProperties.value[key] : undefined
+    const previousValues = Array.isArray(previous) ? previous : (previous ? [previous] : [])
+    const validPrevious = previousValues.filter(value => property.options.some(option => option.valueId === value || option.valueName === value))
+    const defaults = property.options.filter(option => option.selected).map(option => option.valueId || option.valueName)
+    values[key] = property.multiple ? (validPrevious.length ? validPrevious : defaults) : (validPrevious[0] || defaults[0] || '')
+  }
+  selectedProperties.value = values
+  queueMicrotask(() => { skipPropertyRefresh = false })
+}
+
+const refreshDependentProperties = async () => {
+  if (!selectedAccountId.value || !schema.value || refreshingProperties.value) return
+  refreshingProperties.value = true
+  try {
+    const result = await checkPublishCapability({
+      accountId: selectedAccountId.value,
+      title: form.title.trim(),
+      properties: propertyPayload()
+    })
+    applySchema(result.data || null, true)
+  } catch (error: any) {
+    if (!error?.messageShown) toast.error(error?.message || '服务类目选项刷新失败')
+  } finally {
+    refreshingProperties.value = false
+  }
 }
 
 const propertyNames = () => {
@@ -357,7 +400,14 @@ const mapProperties = (accountSchema: PublishCapabilityResult, names: Map<string
       options.push(...(property.multiple ? fallback : fallback.slice(0, 1)))
     }
     if (property.required && !options.length) throw new Error(`必填属性“${property.propertyName}”在该账号没有可用选项`)
-    for (const option of options) payload.push({ propertyId: property.propertyId, valueKey: option.valueId || option.valueName })
+    for (const option of options) payload.push({
+      propertyId: property.propertyId,
+      valueKey: option.valueId || option.valueName,
+      propertyName: property.propertyName,
+      valueName: option.valueName,
+      channelCategoryId: option.channelCategoryId,
+      taobaoCategoryId: option.taobaoCategoryId
+    })
   }
   return payload
 }
@@ -545,10 +595,11 @@ onMounted(async () => {
       <div class="section-title"><h2>2. 类目与动态属性</h2><span :class="`level level--${schema.supportLevel.toLowerCase()}`">{{ schema.categoryName }} · {{ schema.supportLabel }}</span></div>
       <div v-if="schema.supportLevel === 'SERVICE_FORM'" class="service-tip">已识别拼单/助力服务表单。请完整选择交付周期、服务类型和计价方式；系统会将平台返回的动态字段一并提交。</div>
       <div v-else-if="!supportsPublishForm(schema.supportLevel)" class="blocked-tip">该类目需要专项适配，当前不会调用真实发布接口。</div>
+      <div v-if="refreshingProperties" class="property-refreshing">正在根据已选类目刷新后续选项…</div>
       <div class="property-grid">
         <label v-for="property in schema.properties" :key="propertyKey(property)">
           <span>{{ property.propertyName }} <em v-if="property.required">必填</em></span>
-          <select v-if="property.options.length" v-model="selectedProperties[propertyKey(property)]" :multiple="property.multiple">
+          <select v-if="property.options.length" v-model="selectedProperties[propertyKey(property)]" :multiple="property.multiple" :disabled="property.dependent || refreshingProperties">
             <option v-if="!property.multiple" value="">请选择</option>
             <option v-for="option in property.options" :key="`${propertyKey(property)}-${option.valueId}-${option.valueName}`" :value="option.valueId || option.valueName" :disabled="option.disabled">{{ option.valueName }}</option>
           </select>
@@ -653,6 +704,6 @@ onMounted(async () => {
 .publish-page{max-width:1180px;margin:0 auto;padding:4px 0 48px;color:#1d2939}.publish-page__header,.section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.publish-page__header{margin-bottom:18px}.publish-page__header h1{margin:0;font-size:27px}.publish-page__header p{margin:6px 0 0;color:#667085}.publish-page__header>span{padding:7px 11px;border-radius:999px;background:#eef4ff;color:#3538cd;font-size:12px;font-weight:700}.publish-card{margin-bottom:16px;padding:20px;border:1px solid #e4e7ec;border-radius:14px;background:#fff;box-shadow:0 2px 8px rgba(16,24,40,.04)}.publish-card h2{margin:0 0 16px;font-size:17px}.form-grid{display:grid;grid-template-columns:220px minmax(260px,1fr) auto;gap:14px;align-items:end}.form-grid label,.property-grid label,.confirm-card>label{display:flex;flex-direction:column;gap:6px}.form-grid label>span,.property-grid label>span,.confirm-card label>span{font-size:12px;font-weight:700;color:#475467}.form-grid .wide{min-width:0}.form-grid .full{grid-column:1/-1}.form-grid input,.form-grid select,.form-grid textarea,.property-grid select,.confirm-card>label>input{box-sizing:border-box;width:100%;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:10px 11px;color:#1d2939;outline:none}.form-grid textarea{resize:vertical}.probe-button,.publish-button{border:0;border-radius:9px;background:#1570ef;color:#fff;font-weight:700;cursor:pointer}.probe-button{height:40px;padding:0 18px}.probe-button:disabled,.publish-button:disabled{opacity:.5;cursor:not-allowed}.section-title h2{margin:0}.level{padding:5px 9px;border-radius:999px;font-size:12px;font-weight:700}.level--general_form{background:#dcfae6;color:#067647}.level--special_adapter{background:#fef0c7;color:#b54708}.level--blocked{background:#fee4e2;color:#b42318}.blocked-tip{margin:14px 0;padding:11px;border-radius:8px;background:#fffaeb;color:#93370d;font-size:13px}.property-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}.property-grid em{font-style:normal;color:#d92d20}.property-grid small{padding:9px;border:1px dashed #fdb022;border-radius:7px;background:#fffaeb;color:#b54708}.image-list{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}.image-card,.image-add{position:relative;width:112px;height:112px;box-sizing:border-box;border-radius:10px;overflow:hidden}.image-card img{width:100%;height:100%;object-fit:cover}.image-card button{position:absolute;right:5px;top:5px;width:24px;height:24px;border:0;border-radius:50%;background:#0009;color:#fff;cursor:pointer}.image-card small{position:absolute;left:5px;bottom:5px;padding:2px 6px;border-radius:999px;background:#1570ef;color:#fff}.image-add{display:grid;place-content:center;gap:5px;border:1px dashed #98a2b3;text-align:center;color:#667085;cursor:pointer}.image-add input{display:none}.image-add strong{color:#1570ef}.image-add span{font-size:11px}.pricing{grid-template-columns:repeat(5,minmax(120px,1fr))}.confirm-card{display:grid;grid-template-columns:1fr 220px 190px;align-items:end;gap:14px}.confirm-card h2{grid-column:1/-1}.confirm-card .ack{display:flex;flex-direction:row;align-items:center;font-size:13px;color:#475467}.publish-button{height:42px}.publish-button:not(:disabled){background:#d92d20}@media(max-width:900px){.form-grid,.pricing,.property-grid,.confirm-card{grid-template-columns:1fr}.confirm-card h2{grid-column:auto}.publish-page__header{flex-direction:column}}
 .location-button,.location-actions button{border:1px solid #b2ccff;border-radius:8px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.location-button:disabled,.location-actions button:disabled{opacity:.5;cursor:not-allowed}.location-help{margin:8px 0 12px;color:#667085;font-size:13px}.location-actions{display:flex;align-items:center;gap:12px;margin-bottom:12px}.location-actions span{color:#067647;font-size:12px}.location-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.location-list>label{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid #e4e7ec;border-radius:10px;cursor:pointer}.location-list>label.selected{border-color:#84adff;background:#f5f8ff}.location-list label>span{display:flex;min-width:0;flex-direction:column;gap:4px}.location-list strong{font-size:14px}.location-list small{color:#667085}.location-empty{padding:16px;border:1px dashed #fdb022;border-radius:9px;background:#fffaeb;color:#b54708}.custom-location{display:flex;flex-direction:column;gap:6px;margin-top:14px}.custom-location>span{font-size:12px;font-weight:700;color:#475467}.custom-location input{box-sizing:border-box;width:100%;border:1px solid #d0d5dd;border-radius:8px;padding:10px 11px}.custom-location small{color:#667085}.confirm-location{display:flex;flex-direction:column;gap:5px;padding:10px;border-radius:8px;background:#f2f4f7}.confirm-location span{font-size:12px;color:#667085}.confirm-location strong{font-size:13px}.confirm-card .confirm-location{grid-column:1/-1}@media(max-width:700px){.location-list{grid-template-columns:1fr}.location-actions{align-items:flex-start;flex-direction:column}}
 .header-actions{display:flex;align-items:center;gap:9px}.header-actions button,.material-bar button,.ai-buttons button,.batch-tools button{border:1px solid #b2ccff;border-radius:8px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.header-actions span{padding:7px 11px;border-radius:999px;background:#eef4ff;color:#3538cd;font-size:12px;font-weight:700}.material-bar{display:flex;align-items:end;gap:10px;margin-bottom:16px;padding:14px 18px;border:1px solid #d1e0ff;border-radius:12px;background:#f5f8ff}.material-bar label{display:flex;min-width:320px;flex-direction:column;gap:5px}.material-bar label span,.ai-panel label span,.batch-results label span{font-size:12px;font-weight:700;color:#475467}.material-bar input,.ai-panel select,.ai-panel textarea,.batch-results select,.batch-results textarea{box-sizing:border-box;width:100%;border:1px solid #d0d5dd;border-radius:8px;padding:9px;background:#fff}.material-bar small{color:#667085}.description-workspace{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,.6fr);gap:14px;align-items:stretch}.description-workspace>label{display:flex;flex-direction:column;gap:6px}.ai-panel{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid #d1e9ff;border-radius:10px;background:#f5fbff}.ai-panel>div:first-child{display:flex;flex-direction:column}.ai-panel>div:first-child small{color:#667085}.ai-panel label{display:flex;flex-direction:column;gap:5px}.ai-buttons{display:flex;gap:7px}.ai-buttons button{flex:1}.ai-buttons button:disabled,.batch-tools button:disabled{opacity:.5;cursor:not-allowed}.vision-ok{color:#067647}.vision-fallback{color:#b54708}.batch-card .section-title p{margin:5px 0;color:#667085;font-size:13px}.mode-switch{display:flex;align-items:center;gap:7px;font-weight:700}.account-checks{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}.account-checks label{padding:8px 11px;border:1px solid #d0d5dd;border-radius:999px;background:#fff}.batch-tools{display:flex;align-items:center;gap:9px}.batch-tools small{color:#667085}.batch-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.batch-results article{padding:13px;border:1px solid #e4e7ec;border-radius:10px}.batch-results article.status-ready,.batch-results article.status-published{border-color:#a6f4c5;background:#f6fef9}.batch-results article.status-failed{border-color:#fecdca;background:#fffbfa}.batch-result-head{display:flex;justify-content:space-between}.batch-result-head span{font-size:12px;font-weight:700}.batch-results p{margin:6px 0 10px;color:#667085;font-size:12px}.batch-results label{display:flex;flex-direction:column;gap:5px;margin-top:8px}.batch-results>article>small{color:#067647}@media(max-width:900px){.description-workspace,.batch-results{grid-template-columns:1fr}.material-bar{align-items:stretch;flex-direction:column}.material-bar label{min-width:0}.header-actions{align-items:flex-start;flex-direction:column}.batch-tools{align-items:stretch;flex-direction:column}}
-.level--service_form{background:#e0f2fe;color:#075985}.service-tip{margin:14px 0;padding:11px;border:1px solid #bae6fd;border-radius:8px;background:#f0f9ff;color:#075985;font-size:13px}
+.level--service_form{background:#e0f2fe;color:#075985}.service-tip{margin:14px 0;padding:11px;border:1px solid #bae6fd;border-radius:8px;background:#f0f9ff;color:#075985;font-size:13px}.property-refreshing{margin-top:14px;padding:10px 12px;border:1px solid #b2ccff;border-radius:8px;background:#f5f8ff;color:#175cd3;font-size:12px}
 .specification-switch{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;padding:10px 12px;border:1px solid #d1e0ff;border-radius:8px;background:#f5f8ff}.specification-switch label{display:flex;align-items:center;gap:7px;font-weight:700;color:#175cd3}.specification-switch span{font-size:12px;color:#475467}.sku-editor{padding:14px;border:1px solid #d0d5dd;border-radius:8px;background:#fff}.sku-property-name{display:flex;align-items:center;gap:10px;margin-bottom:12px}.sku-property-name span{min-width:56px;font-size:12px;font-weight:700;color:#475467}.sku-property-name input,.sku-editor__row input{box-sizing:border-box;width:100%;min-width:0;border:1px solid #d0d5dd;border-radius:7px;padding:9px 10px;color:#1d2939;outline:none}.sku-editor__head,.sku-editor__row{display:grid;grid-template-columns:minmax(150px,1.5fr) minmax(100px,1fr) minmax(100px,1fr) minmax(80px,.7fr) 32px;gap:9px;align-items:center}.sku-editor__head{padding:0 0 6px;font-size:12px;font-weight:700;color:#475467}.sku-editor__row{margin-top:8px}.sku-editor__remove{width:32px;height:32px;border:1px solid #fecdca;border-radius:7px;background:#fff;color:#b42318;font-size:20px;line-height:1;cursor:pointer}.sku-editor__remove:disabled{opacity:.45;cursor:not-allowed}.sku-editor__add{margin-top:12px;border:1px solid #b2ccff;border-radius:7px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.sku-editor__add:disabled{opacity:.5;cursor:not-allowed}.delivery-pricing{grid-template-columns:repeat(2,minmax(160px,220px));margin-top:14px}@media(max-width:700px){.specification-switch{align-items:flex-start;flex-direction:column}.sku-editor{overflow-x:auto}.sku-editor__head,.sku-editor__row{min-width:620px}.delivery-pricing{grid-template-columns:1fr}.sku-property-name{align-items:flex-start;flex-direction:column;gap:5px}.sku-property-name span{min-width:0}}
 </style>

@@ -40,6 +40,11 @@ public class ProductPublishReqDTO {
         private String propertyId;
         /** 对应 valueId；接口没有 valueId 时使用选项名称。 */
         private String valueKey;
+        /** The platform metadata is returned by the category form and is required for dependent fields. */
+        private String propertyName;
+        private String valueName;
+        private String channelCategoryId;
+        private String taobaoCategoryId;
     }
 
     @Data

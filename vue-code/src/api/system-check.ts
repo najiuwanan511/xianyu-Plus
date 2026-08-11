@@ -40,6 +40,15 @@ export interface PublishCapabilityOption {
   disabled: boolean
 }
 
+export interface PublishCapabilitySelection {
+  propertyId: string
+  valueKey: string
+  propertyName?: string
+  valueName?: string
+  channelCategoryId?: string
+  taobaoCategoryId?: string
+}
+
 export interface PublishCapabilityResult {
   passed: boolean
   status: SystemCheckStatus
@@ -70,7 +79,7 @@ export function getSystemCheckOverview() {
   })
 }
 
-export function checkPublishCapability(data: { accountId: number; title: string }) {
+export function checkPublishCapability(data: { accountId: number; title: string; properties?: PublishCapabilitySelection[] }) {
   return request<PublishCapabilityResult>({
     url: '/system-check/publish-capability',
     method: 'POST',

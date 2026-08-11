@@ -2,6 +2,7 @@ package com.xianyusmart.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyusmart.controller.dto.PublishCapabilityCheckRespDTO;
+import com.xianyusmart.controller.dto.ProductPublishReqDTO;
 import com.xianyusmart.entity.XianyuAccount;
 import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.utils.XianyuApiCallUtils;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,6 +22,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 class PublishCapabilityProbeServiceTest {
 
@@ -148,6 +151,52 @@ class PublishCapabilityProbeServiceTest {
         assertEquals("SERVICE_FORM", result.getSupportLevel());
         assertEquals("拼单/助力服务表单", result.getSupportLabel());
         assertEquals(3, result.getRequiredPropertyCount());
+    }
+
+    @Test
+    void shouldSendSelectedCategoryToLoadDependentServiceFields() {
+        XianyuAccount account = new XianyuAccount();
+        account.setId(10L);
+        when(accountMapper.selectById(10L)).thenReturn(account);
+        when(accountService.getCookieByAccountId(10L)).thenReturn("_m_h5_tk=token_exp; unb=buyer");
+        String categoryResponse = """
+                {"ret":["SUCCESS"],"data":{
+                  "categoryPredictResult":[{"catId":"service-1","catName":"拼单/助力"}],
+                  "cardList":[
+                    {"cardData":{"propertyId":"category","propertyName":"分类","required":true,"valuesList":[{"valueId":"assist","catName":"拼单/助力","channelCatId":"100"}]}},
+                    {"cardData":{"propertyId":"period","propertyName":"交付周期","required":true,"valuesList":[{"valueId":"10m","catName":"10分钟"}]}},
+                    {"cardData":{"propertyId":"service","propertyName":"服务类型","required":true,"valuesList":[{"valueId":"assist","catName":"助力"}]}},
+                    {"cardData":{"propertyId":"pricing","propertyName":"计价方式","required":true,"valuesList":[{"valueId":"unit","catName":"元/次"}]}}
+                  ]
+                }}
+                """;
+        String locationResponse = """
+                {"ret":["SUCCESS"],"data":{"commonAddresses":[{"divisionId":"310101"}]}}
+                """;
+        when(apiCallUtils.callApiWithRetry(eq(10L), eq(PublishCapabilityProbeService.CATEGORY_API), any(Map.class),
+                any(String.class), eq("2.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, categoryResponse, null, false));
+        when(apiCallUtils.callApiWithRetry(eq(10L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
+                any(String.class), eq("1.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, locationResponse, null, false));
+        ProductPublishReqDTO.PropertySelection selection = new ProductPublishReqDTO.PropertySelection();
+        selection.setPropertyId("category");
+        selection.setValueKey("assist");
+        selection.setPropertyName("分类");
+        selection.setValueName("拼单/助力");
+        selection.setChannelCategoryId("100");
+
+        PublishCapabilityCheckRespDTO result = service.check(10L, "奶茶助力快单", List.of(selection));
+
+        assertEquals("SERVICE_FORM", result.getSupportLevel());
+        assertEquals(0, result.getDependentPropertyCount());
+        ArgumentCaptor<Map<String, Object>> request = ArgumentCaptor.forClass(Map.class);
+        verify(apiCallUtils).callApiWithRetry(eq(10L), eq(PublishCapabilityProbeService.CATEGORY_API), request.capture(),
+                any(String.class), eq("2.0"), eq(null), eq(null));
+        List<?> labels = (List<?>) request.getValue().get("itemLabelExtList");
+        assertEquals(1, labels.size());
+        assertEquals("分类", ((Map<?, ?>) labels.get(0)).get("propertyName"));
+        assertEquals("拼单/助力", ((Map<?, ?>) labels.get(0)).get("text"));
     }
 
     @Test

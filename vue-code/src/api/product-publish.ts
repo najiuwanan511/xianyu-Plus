@@ -9,6 +9,10 @@ export interface ProductPublishImage {
 export interface ProductPublishProperty {
   propertyId: string
   valueKey: string
+  propertyName?: string
+  valueName?: string
+  channelCategoryId?: string
+  taobaoCategoryId?: string
 }
 
 export interface ProductPublishSkuSpec {

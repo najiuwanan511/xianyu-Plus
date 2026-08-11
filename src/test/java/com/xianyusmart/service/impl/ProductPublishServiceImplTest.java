@@ -44,7 +44,7 @@ class ProductPublishServiceImplTest {
     void shouldRevalidateSchemaAndPublishGeneralProduct() {
         ProductPublishReqDTO request = request();
         PublishCapabilityCheckRespDTO schema = generalSchema();
-        when(probeService.check(7L, request.getTitle())).thenReturn(schema);
+        when(probeService.check(eq(7L), eq(request.getTitle()), any(List.class))).thenReturn(schema);
         when(accountService.getCookieByAccountId(7L)).thenReturn("_m_h5_tk=token_exp");
         when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))
@@ -75,7 +75,7 @@ class ProductPublishServiceImplTest {
         request.setQuantity(null);
         request.setSkuPropertyName("套餐");
         request.setSkuSpecs(List.of(sku("月卡", "2.50", 2), sku("年卡", "1.00", 1)));
-        when(probeService.check(7L, request.getTitle())).thenReturn(generalSchema());
+        when(probeService.check(eq(7L), eq(request.getTitle()), any(List.class))).thenReturn(generalSchema());
         when(accountService.getCookieByAccountId(7L)).thenReturn("_m_h5_tk=token_exp");
         when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))
@@ -122,7 +122,7 @@ class ProductPublishServiceImplTest {
         PublishCapabilityCheckRespDTO schema = generalSchema();
         schema.setSupportLevel("SPECIAL_ADAPTER");
         schema.setSupportLabel("需要专项适配");
-        when(probeService.check(7L, request.getTitle())).thenReturn(schema);
+        when(probeService.check(eq(7L), eq(request.getTitle()), any(List.class))).thenReturn(schema);
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.publish(request));
 
@@ -140,7 +140,7 @@ class ProductPublishServiceImplTest {
                 selection("service-type", "assist"),
                 selection("pricing", "unit")));
         PublishCapabilityCheckRespDTO schema = assistServiceSchema();
-        when(probeService.check(7L, request.getTitle())).thenReturn(schema);
+        when(probeService.check(eq(7L), eq(request.getTitle()), any(List.class))).thenReturn(schema);
         when(accountService.getCookieByAccountId(7L)).thenReturn("_m_h5_tk=token_exp");
         when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))
@@ -171,7 +171,7 @@ class ProductPublishServiceImplTest {
         addressRequest.setLookupLatitude(31.2);
         addressRequest.setCustomPoiName("张江自提点");
         request.setAddress(addressRequest);
-        when(probeService.check(7L, request.getTitle())).thenReturn(generalSchema());
+        when(probeService.check(eq(7L), eq(request.getTitle()), any(List.class))).thenReturn(generalSchema());
         when(accountService.getCookieByAccountId(7L)).thenReturn("_m_h5_tk=token_exp");
         when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
                 any(String.class), eq("1.0"), eq(null), eq(null)))

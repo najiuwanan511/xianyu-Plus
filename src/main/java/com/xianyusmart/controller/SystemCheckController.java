@@ -34,6 +34,7 @@ public class SystemCheckController {
     @PostMapping("/publish-capability")
     public ResultObject<PublishCapabilityCheckRespDTO> publishCapability(
             @RequestBody PublishCapabilityCheckReqDTO request) {
-        return ResultObject.success(publishCapabilityProbeService.check(request.getAccountId(), request.getTitle()));
+        return ResultObject.success(publishCapabilityProbeService.check(
+                request.getAccountId(), request.getTitle(), request.getProperties()));
     }
 }

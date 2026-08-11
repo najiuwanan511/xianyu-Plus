@@ -2,6 +2,7 @@ package com.xianyusmart.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyusmart.controller.dto.PublishCapabilityCheckRespDTO;
+import com.xianyusmart.controller.dto.ProductPublishReqDTO;
 import com.xianyusmart.entity.XianyuAccount;
 import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.utils.XianyuApiCallUtils;
@@ -41,6 +42,11 @@ public class PublishCapabilityProbeService {
     }
 
     public PublishCapabilityCheckRespDTO check(Long accountId, String title) {
+        return check(accountId, title, List.of());
+    }
+
+    public PublishCapabilityCheckRespDTO check(Long accountId, String title,
+                                                List<ProductPublishReqDTO.PropertySelection> selections) {
         PublishCapabilityCheckRespDTO response = new PublishCapabilityCheckRespDTO();
         response.setStatus("FAIL");
         response.setRealPublishTested(false);
@@ -69,6 +75,7 @@ public class PublishCapabilityProbeService {
         categoryRequest.put("scene", "newPublishChoice");
         categoryRequest.put("description", probeTitle);
         categoryRequest.put("imageInfos", Collections.emptyList());
+        categoryRequest.put("itemLabelExtList", selectedLabels(selections));
         categoryRequest.put("uniqueCode", String.valueOf(System.currentTimeMillis()));
 
         XianyuApiCallUtils.ApiCallResult categoryResult = apiCallUtils.callApiWithRetry(
@@ -78,7 +85,7 @@ public class PublishCapabilityProbeService {
         }
 
         Map<String, Object> categoryData = categoryResult.extractData();
-        Map<String, Object> prediction = asMap(categoryData == null ? null : categoryData.get("categoryPredictResult"));
+        Map<String, Object> prediction = firstMap(categoryData == null ? null : categoryData.get("categoryPredictResult"));
         String categoryId = text(prediction.get("catId"));
         if (categoryId.isBlank()) {
             return failed(response, "类目接口未返回有效分类", "登录态可访问接口，但没有识别出商品类目；可更换更明确的商品标题后重试。");
@@ -127,6 +134,38 @@ public class PublishCapabilityProbeService {
             response.setDetail("系统已保持自动发布关闭；只有确认符合闲鱼当前规则后，才能继续人工处理。");
         }
         return response;
+    }
+
+    private List<Map<String, Object>> selectedLabels(List<ProductPublishReqDTO.PropertySelection> selections) {
+        List<Map<String, Object>> labels = new ArrayList<>();
+        if (selections == null) return labels;
+        for (ProductPublishReqDTO.PropertySelection selection : selections) {
+            if (selection == null || text(selection.getPropertyId()).isBlank() ||
+                    text(selection.getPropertyName()).isBlank() || text(selection.getValueName()).isBlank()) {
+                continue;
+            }
+            Map<String, Object> label = new LinkedHashMap<>();
+            label.put("channelCateName", selection.getValueName());
+            label.put("valueId", null);
+            label.put("channelCateId", blankToNull(selection.getChannelCategoryId()));
+            label.put("valueName", null);
+            label.put("tbCatId", blankToNull(selection.getTaobaoCategoryId()));
+            label.put("subPropertyId", null);
+            label.put("labelType", "common");
+            label.put("subValueId", null);
+            label.put("labelId", null);
+            label.put("propertyName", selection.getPropertyName());
+            label.put("isUserClick", "1");
+            label.put("isUserCancel", null);
+            label.put("from", "newPublishChoice");
+            label.put("propertyId", selection.getPropertyId());
+            label.put("labelFrom", "newPublish");
+            label.put("text", selection.getValueName());
+            label.put("properties", selection.getPropertyId() + "##" + selection.getPropertyName() + ":" +
+                    text(selection.getChannelCategoryId()) + "##" + selection.getValueName());
+            labels.add(label);
+        }
+        return labels;
     }
 
     private List<PublishCapabilityCheckRespDTO.Property> parseProperties(Object rawCards) {
@@ -306,6 +345,22 @@ public class PublishCapabilityProbeService {
             return objectMapper.convertValue(map, Map.class);
         }
         return Collections.emptyMap();
+    }
+
+    private Map<String, Object> firstMap(Object value) {
+        Map<String, Object> map = asMap(value);
+        if (!map.isEmpty()) return map;
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                map = asMap(item);
+                if (!map.isEmpty()) return map;
+            }
+        }
+        return Collections.emptyMap();
+    }
+
+    private Object blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private String text(Object value) {
