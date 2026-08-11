@@ -107,6 +107,17 @@ cd ~/xianyu-Plus
 
 更新脚本会保留现有数据卷并重新构建服务。更新前如有重要业务数据，建议先完成备份。
 
+### 从旧仓库迁移
+
+旧仓库 `najiuwanan/xianyu-Plus` 已无法继续发布更新。已部署旧版的用户，请进入原项目目录后执行一次迁移命令：
+
+```bash
+cd ~/xianyu-Plus
+curl -fsSL https://raw.githubusercontent.com/najiuwanan511/xianyu-Plus/main/migrate-from-legacy.sh | bash
+```
+
+迁移会保留现有数据库、账号、商品、订单、卡券和应用数据；仅停止旧容器并从新仓库启动服务。迁移完成后，后续网页更新与 `./update.sh` 都使用新仓库。
+
 ### 飞牛 OS 网页在线更新
 
 升级到 V2.2.5 或更高版本后，在项目目录执行一次：

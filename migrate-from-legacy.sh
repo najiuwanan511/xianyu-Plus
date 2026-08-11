@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+NEW_REPOSITORY="https://github.com/najiuwanan511/xianyu-Plus.git"
+NEW_UPDATE_REPOSITORY="najiuwanan511/xianyu-Plus"
+LEGACY_DIR="${XIANYU_PLUS_LEGACY_DIR:-$(pwd)}"
+TARGET_DIR="${XIANYU_PLUS_TARGET_DIR:-$HOME/xianyu-plus}"
+
+fail() {
+    echo "迁移失败: $*" >&2
+    exit 1
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "缺少命令: $1"
+}
+
+set_env() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" "$TARGET_DIR/.env"; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$TARGET_DIR/.env"
+    else
+        printf '\n%s=%s\n' "$key" "$value" >> "$TARGET_DIR/.env"
+    fi
+}
+
+find_legacy_volume() {
+    local preferred_name="$1"
+    local fallback_name="$2"
+    if docker volume inspect "$preferred_name" >/dev/null 2>&1; then
+        printf '%s\n' "$preferred_name"
+    elif docker volume inspect "$fallback_name" >/dev/null 2>&1; then
+        printf '%s\n' "$fallback_name"
+    fi
+}
+
+require_command docker
+require_command git
+docker compose version >/dev/null 2>&1 || fail "需要 Docker Compose v2"
+
+LEGACY_DIR="$(cd "$LEGACY_DIR" && pwd)"
+[ -f "$LEGACY_DIR/.env" ] || fail "未找到 $LEGACY_DIR/.env。请先进入旧项目目录后再执行。"
+[ -f "$LEGACY_DIR/compose.yaml" ] || fail "未找到 $LEGACY_DIR/compose.yaml。请确认这是旧项目目录。"
+[ ! -e "$TARGET_DIR" ] || fail "目标目录已存在: $TARGET_DIR。请设置一个空的 XIANYU_PLUS_TARGET_DIR 后重试。"
+
+mkdir -p "$(dirname "$TARGET_DIR")"
+git clone --depth 1 "$NEW_REPOSITORY" "$TARGET_DIR"
+cp "$LEGACY_DIR/.env" "$TARGET_DIR/.env"
+chmod 600 "$TARGET_DIR/.env"
+
+# Older deployments did not persist volume names in .env. Reuse either known
+# legacy name instead of creating empty volumes beside the user's data.
+MYSQL_VOLUME="$(find_legacy_volume xianyu-plus-mysql-data xianyusmart_mysql-data || true)"
+APP_DATA_VOLUME="$(find_legacy_volume xianyu-plus-app-data xianyusmart_app-data || true)"
+APP_LOGS_VOLUME="$(find_legacy_volume xianyu-plus-app-logs xianyusmart_app-logs || true)"
+[ -n "$MYSQL_VOLUME" ] && set_env MYSQL_DATA_VOLUME "$MYSQL_VOLUME"
+[ -n "$APP_DATA_VOLUME" ] && set_env APP_DATA_VOLUME "$APP_DATA_VOLUME"
+[ -n "$APP_LOGS_VOLUME" ] && set_env APP_LOGS_VOLUME "$APP_LOGS_VOLUME"
+set_env UPDATE_GITHUB_REPOSITORY "$NEW_UPDATE_REPOSITORY"
+set_env UPDATE_RELEASE_API "https://api.github.com/repos/${NEW_UPDATE_REPOSITORY}/releases/latest"
+
+BACKUP_FILE="$LEGACY_DIR/.env.before-xianyu-plus-migration.$(date +%Y%m%d-%H%M%S)"
+cp "$LEGACY_DIR/.env" "$BACKUP_FILE"
+
+echo "正在停止旧服务（不会删除数据卷）..."
+docker compose --project-directory "$LEGACY_DIR" --env-file "$LEGACY_DIR/.env" down --remove-orphans
+
+echo "正在启动新版本并执行数据兼容检查..."
+cd "$TARGET_DIR"
+./update.sh
+
+echo
+echo "迁移完成。数据卷和原项目目录均已保留。"
+echo "新项目目录: $TARGET_DIR"
+echo "旧配置备份: $BACKUP_FILE"
+echo "后续更新请在新项目目录执行: ./update.sh"
