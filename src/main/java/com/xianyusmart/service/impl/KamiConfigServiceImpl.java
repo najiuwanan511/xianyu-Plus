@@ -122,6 +122,9 @@ public class KamiConfigServiceImpl implements KamiConfigService {
                 }
                 config.setDeliveryTemplate(reqDTO.getDeliveryTemplate());
             }
+            if (reqDTO.getDeliveryImageUrl() != null) {
+                config.setDeliveryImageUrl(reqDTO.getDeliveryImageUrl().trim());
+            }
             if (reqDTO.getApiUrl() != null) {
                 config.setApiUrl(reqDTO.getApiUrl());
             }
@@ -816,6 +819,7 @@ public class KamiConfigServiceImpl implements KamiConfigService {
         dto.setSourceType(config.getSourceType() == null ? 1 : config.getSourceType());
         dto.setFixedContent(config.getFixedContent());
         dto.setDeliveryTemplate(config.getDeliveryTemplate());
+        dto.setDeliveryImageUrl(config.getDeliveryImageUrl());
         dto.setApiUrl(config.getApiUrl());
         dto.setApiMethod(config.getApiMethod());
         dto.setApiHeaders(config.getApiHeaders());

@@ -540,6 +540,20 @@ public class AccountServiceImpl implements AccountService {
             throw new RuntimeException("删除账号失败: " + e.getMessage(), e);
         }
     }
+
+    @Override
+    public void resetAccountIdSequenceIfEmpty() {
+        if (accountMapper.countAllAccounts() != 0) {
+            return;
+        }
+        try {
+            accountMapper.resetAutoIncrement();
+            log.info("账号列表已清空，下一次新增账号将从 ID 1 开始");
+        } catch (Exception e) {
+            // 删除已经完成；重置展示 ID 失败不应导致删除接口返回失败。
+            log.warn("账号列表已清空，但重置自增 ID 失败", e);
+        }
+    }
     
     @Override
     @Transactional(rollbackFor = Exception.class)

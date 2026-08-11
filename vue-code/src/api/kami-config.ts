@@ -8,6 +8,7 @@ export interface KamiConfig {
   sourceType?: number;
   fixedContent?: string;
   deliveryTemplate?: string;
+  deliveryImageUrl?: string;
   relatedGoodsCount?: number;
   apiUrl?: string;
   apiMethod?: 'GET' | 'POST' | string;
@@ -44,6 +45,7 @@ export interface SaveKamiConfigReq {
   sourceType?: number;
   fixedContent?: string;
   deliveryTemplate?: string;
+  deliveryImageUrl?: string;
   apiUrl?: string;
   apiMethod?: 'GET' | 'POST';
   apiHeaders?: string;

@@ -25,6 +25,9 @@ public class XianyuKamiConfig {
     /** 卡券库统一发货消息模板；{DELIVERY_CONTENT} 会替换为实际卡密或来源内容。 */
     private String deliveryTemplate;
 
+    /** 卡券库统一发货图片；商品单独配置图片时优先使用商品图片。 */
+    private String deliveryImageUrl;
+
     /** 外部 API 卡券配置，仅 sourceType=2 时使用。 */
     private String apiUrl;
 

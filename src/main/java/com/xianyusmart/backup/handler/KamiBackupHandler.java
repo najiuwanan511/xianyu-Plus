@@ -59,6 +59,7 @@ public class KamiBackupHandler implements DataBackupHandler {
             map.put("sourceType", config.getSourceType());
             map.put("fixedContent", config.getFixedContent());
             map.put("deliveryTemplate", config.getDeliveryTemplate());
+            map.put("deliveryImageUrl", config.getDeliveryImageUrl());
             map.put("apiUrl", config.getApiUrl());
             map.put("apiMethod", config.getApiMethod());
             map.put("apiHeaders", config.getApiHeaders());
@@ -140,6 +141,7 @@ public class KamiBackupHandler implements DataBackupHandler {
                     config.setSourceType(map.get("sourceType") != null ? ((Number) map.get("sourceType")).intValue() : 1);
                     config.setFixedContent((String) map.get("fixedContent"));
                     config.setDeliveryTemplate((String) map.get("deliveryTemplate"));
+                    config.setDeliveryImageUrl((String) map.get("deliveryImageUrl"));
                     config.setApiUrl((String) map.get("apiUrl"));
                     config.setApiMethod((String) map.get("apiMethod"));
                     config.setApiHeaders((String) map.get("apiHeaders"));

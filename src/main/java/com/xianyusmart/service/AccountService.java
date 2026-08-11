@@ -90,6 +90,11 @@ public interface AccountService {
      * @return 是否删除成功
      */
     boolean deleteAccountAndRelatedData(Long accountId);
+
+    /**
+     * 所有账号都删除后，重置账号表的自增 ID，使下一次新增账号从 1 开始。
+     */
+    void resetAccountIdSequenceIfEmpty();
     
     /**
      * 更新Cookie状态

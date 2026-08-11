@@ -367,6 +367,7 @@ public class AccountController {
             webSocketTokenService.clearAccountRuntimeState(id);
             webSocketTokenService.clearToken(id);
             accountService.deleteAccountAndRelatedData(id);
+            accountService.resetAccountIdSequenceIfEmpty();
             
             DeleteAccountRespDTO respDTO = new DeleteAccountRespDTO();
             respDTO.setMessage("删除成功");

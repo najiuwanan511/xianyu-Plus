@@ -2,6 +2,9 @@
 import { ref, computed, onMounted, onUnmounted, inject, nextTick } from 'vue'
 import { toast } from '@/utils/toast'
 import { showConfirm } from '@/utils/confirm'
+import { getAccountList } from '@/api/account'
+import { uploadImage } from '@/api/image'
+import type { Account } from '@/types'
 import {
   getKamiConfigs,
   saveKamiConfig,
@@ -46,11 +49,16 @@ const showApiDialog = ref(false)
 const apiSaving = ref(false)
 const apiTesting = ref(false)
 const apiTestResult = ref('')
+const deliveryImageInput = ref<HTMLInputElement | null>(null)
+const deliveryImageUploading = ref(false)
+const uploadAccounts = ref<Account[]>([])
+const deliveryImageUploadAccountId = ref<number | null>(null)
 const apiForm = ref({
   aliasName: '',
   sourceType: 2,
   fixedContent: '',
   deliveryTemplate: '',
+  deliveryImageUrl: '',
   importContent: '',
   apiUrl: '',
   apiMethod: 'POST' as 'GET' | 'POST',
@@ -251,6 +259,18 @@ const loadKamiConfigs = async () => {
   }
 }
 
+const loadUploadAccounts = async () => {
+  try {
+    const response = await getAccountList()
+    uploadAccounts.value = response.data?.accounts || []
+    if (!deliveryImageUploadAccountId.value && uploadAccounts.value[0]) {
+      deliveryImageUploadAccountId.value = uploadAccounts.value[0].id
+    }
+  } catch (error) {
+    console.error('加载图片上传账号失败', error)
+  }
+}
+
 const loadKamiItems = async () => {
   selectedKamiItemIds.value = []
   if (!selectedConfigId.value || !isLocalSource.value) {
@@ -313,6 +333,7 @@ const handleCreate = async () => {
             sourceType: requestedSource,
             fixedContent: '',
             deliveryTemplate: '',
+            deliveryImageUrl: '',
             importContent: '',
             apiUrl: '',
             apiMethod: 'POST',
@@ -338,12 +359,14 @@ const handleCreate = async () => {
 
 const openApiDialog = () => {
   if (!selectedConfig.value) return
+  void loadUploadAccounts()
   const config = selectedConfig.value
   apiForm.value = {
     aliasName: config.aliasName || '',
     sourceType: config.sourceType || 1,
     fixedContent: config.fixedContent || '',
     deliveryTemplate: config.deliveryTemplate || '',
+    deliveryImageUrl: config.deliveryImageUrl || '',
     importContent: '',
     apiUrl: config.apiUrl || '',
     apiMethod: (config.apiMethod === 'GET' ? 'GET' : 'POST'),
@@ -354,6 +377,45 @@ const openApiDialog = () => {
   }
   apiTestResult.value = ''
   showApiDialog.value = true
+}
+
+const chooseDeliveryImage = () => deliveryImageInput.value?.click()
+
+const uploadDeliveryImage = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  const accountId = deliveryImageUploadAccountId.value
+  if (!file) return
+  if (!accountId) {
+    toast.warning('请先选择用于上传图片的闲鱼账号')
+    input.value = ''
+    return
+  }
+  if (!file.type.startsWith('image/')) {
+    toast.warning('请选择图片文件')
+    input.value = ''
+    return
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    toast.warning('图片不能超过 10MB')
+    input.value = ''
+    return
+  }
+  deliveryImageUploading.value = true
+  try {
+    const response = await uploadImage(accountId, file)
+    if ((response.code === 0 || response.code === 200) && response.data) {
+      apiForm.value.deliveryImageUrl = response.data
+      toast.success('发货图片上传成功')
+    } else {
+      throw new Error(response.msg || '图片上传失败')
+    }
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '图片上传失败')
+  } finally {
+    deliveryImageUploading.value = false
+    input.value = ''
+  }
 }
 
 const handleTestApi = async () => {
@@ -410,6 +472,7 @@ const handleSaveApi = async () => {
       aliasName: apiForm.value.aliasName.trim(),
       sourceType: apiForm.value.sourceType,
       deliveryTemplate: apiForm.value.deliveryTemplate.trim(),
+      deliveryImageUrl: apiForm.value.deliveryImageUrl.trim(),
       ...(apiForm.value.sourceType === 3 ? {
         fixedContent: apiForm.value.fixedContent
       } : {}),
@@ -742,6 +805,7 @@ onMounted(() => {
   window.addEventListener('resize', checkScreenSize)
   if (setHeaderContent) setHeaderContent(null)
   loadKamiConfigs()
+  void loadUploadAccounts()
 })
 
 onUnmounted(() => {
@@ -1195,6 +1259,26 @@ onUnmounted(() => {
                         <small>{{ variable.description }}</small>
                       </button>
                     </div>
+                  </div>
+                  <div class="form-row">
+                    <label class="form-label">自动发货图片</label>
+                    <div class="delivery-image-control">
+                      <input ref="deliveryImageInput" type="file" accept="image/*" class="delivery-image-control__input" @change="uploadDeliveryImage" />
+                      <div class="delivery-image-control__actions">
+                        <select v-model.number="deliveryImageUploadAccountId" class="native-select" :disabled="deliveryImageUploading || uploadAccounts.length === 0">
+                          <option :value="null" disabled>选择上传账号</option>
+                          <option v-for="account in uploadAccounts" :key="account.id" :value="account.id">
+                            {{ account.accountNote || account.unb || `账号 #${account.id}` }}
+                          </option>
+                        </select>
+                        <button type="button" class="btn btn-secondary btn-sm" :disabled="deliveryImageUploading || uploadAccounts.length === 0" @click="chooseDeliveryImage">
+                          {{ deliveryImageUploading ? '上传中…' : (apiForm.deliveryImageUrl ? '更换图片' : '上传图片') }}
+                        </button>
+                        <button v-if="apiForm.deliveryImageUrl" type="button" class="btn btn-danger btn-sm" :disabled="deliveryImageUploading" @click="apiForm.deliveryImageUrl = ''">移除</button>
+                      </div>
+                      <img v-if="apiForm.deliveryImageUrl" :src="apiForm.deliveryImageUrl" class="delivery-image-control__preview" alt="自动发货图片预览" />
+                    </div>
+                    <p class="form-hint">可选。发货文字完成后会发送此图片；商品单独设置发货图片时，以商品图片为准。</p>
                   </div>
                   <p class="form-hint">使用 <code>######</code> 分隔，可按顺序拆成多条消息发送。旧模板中的 <code>{kmKey}</code> 仍然兼容。</p>
                 </div>
@@ -1810,6 +1894,22 @@ onUnmounted(() => {
   background: rgba(10,132,255,.08);
   color: #0969b8;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.delivery-image-control {
+  flex: 1 1 calc(100% - 80px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.delivery-image-control__input { display: none; }
+.delivery-image-control__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.delivery-image-control__preview {
+  width: min(220px, 100%);
+  max-height: 220px;
+  object-fit: cover;
+  border: 1px solid rgba(60,60,67,.14);
+  border-radius: 8px;
+  background: rgba(60,60,67,.05);
 }
 .delivery-template-guide {
   flex: 1 1 calc(100% - 80px);
