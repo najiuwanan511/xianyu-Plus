@@ -502,6 +502,18 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 return com.xianyusmart.common.ResultObject.failed("没有可发送的内容，请检查商品发货配置或卡密库存");
             }
 
+            ImageDeliveryResult imageResult = sendDeliveryImages(
+                    accountId, xyGoodsId, cid, toId, deliveryConfig, false);
+            if (!imageResult.success()) {
+                if (cardDelivery) {
+                    kamiConfigService.releaseReservation(reservationOrderId);
+                }
+                String reason = PARTIAL_DELIVERY_REVIEW_PREFIX + "发货图片仅成功 "
+                        + imageResult.sent() + "/" + imageResult.configured() + "，文字内容未发送，请人工核对。";
+                updateRecordState(record.getId(), -1, null, reason);
+                return com.xianyusmart.common.ResultObject.failed(reason);
+            }
+
             List<String> messages = messageTemplateRenderer.splitMessages(content);
             int sentCount = 0;
             for (String message : messages) {
@@ -522,14 +534,6 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             if (cardDelivery) {
                 kamiConfigService.commitReservation(
                         reservationOrderId, orderId, accountId, xyGoodsId, toId, buyerUserName);
-            }
-            ImageDeliveryResult imageResult = sendDeliveryImages(
-                    accountId, xyGoodsId, cid, toId, deliveryConfig, false);
-            if (!imageResult.success()) {
-                String reason = PARTIAL_DELIVERY_REVIEW_PREFIX + "文字内容已发送，但配置的发货图片仅成功 "
-                        + imageResult.sent() + "/" + imageResult.configured() + "，请人工核对。";
-                updateRecordState(record.getId(), -1, String.join("\n", messages), reason);
-                return com.xianyusmart.common.ResultObject.failed(reason);
             }
             updateRecordState(record.getId(), 1, String.join("\n", messages), null);
             return com.xianyusmart.common.ResultObject.success(
@@ -753,6 +757,21 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                     return;
                 }
 
+                ensureExecutionAllowed(executionAllowed);
+                cardDeliveryAttempted = cardDelivery;
+                ImageDeliveryResult imageResult = sendDeliveryImages(
+                        accountId, xyGoodsId, cid, toId, deliveryConfig, needHumanLikeDelay);
+                if (!imageResult.success()) {
+                    if (cardDelivery) {
+                        kamiConfigService.releaseReservation(orderId);
+                    }
+                    String failReason = PARTIAL_DELIVERY_REVIEW_PREFIX + "发货图片仅成功 "
+                            + imageResult.sent() + "/" + imageResult.configured() + "，文字内容未发送，请人工核对后处理。";
+                    updateRecordState(recordId, -1, allContent.toString(), failReason);
+                    emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
+                    return;
+                }
+
                 List<String> messages = messageTemplateRenderer.splitMessages(content);
                 int sentInThisDelivery = 0;
                 for (String message : messages) {
@@ -798,15 +817,6 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 ensureExecutionAllowed(executionAllowed);
                 if (cardDelivery) {
                     kamiConfigService.commitReservation(orderId, orderId, accountId, xyGoodsId, toId, buyerUserName);
-                }
-                ImageDeliveryResult imageResult = sendDeliveryImages(
-                        accountId, xyGoodsId, cid, toId, deliveryConfig, needHumanLikeDelay);
-                if (!imageResult.success()) {
-                    String failReason = PARTIAL_DELIVERY_REVIEW_PREFIX + "文字内容已发送，但配置的发货图片仅成功 "
-                            + imageResult.sent() + "/" + imageResult.configured() + "，请人工核对后处理。";
-                    updateRecordState(recordId, -1, allContent.toString(), failReason);
-                    emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
-                    return;
                 }
                 log.info("【账号{}】✅ 发货成功[{}/{}]: recordId={}, deliveryMode={}, messageCount={}",
                         accountId, i + 1, deliveryCount, recordId, deliveryMode, messages.size());
