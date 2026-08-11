@@ -47,4 +47,15 @@ class OnlineUpdateSourceTest {
         assertTrue(workflow.contains("gh release upload"));
         assertTrue(dockerfile.contains("UPDATE_JAR_PATH:-/app/update/app.jar"));
     }
+
+    @Test
+    void firstInstallEnablesHostUpdateAgentWithoutRebuildingApplicationTwice() throws Exception {
+        String installer = Files.readString(Path.of("install.sh"));
+        String agentInstaller = Files.readString(Path.of("deploy/self-update/install-online-update.sh"));
+
+        assertTrue(installer.contains("install-online-update.sh \"$ROOT_DIR\" --skip-app-recreate"));
+        assertTrue(installer.contains("[ ! -d /run/systemd/system ]"));
+        assertTrue(agentInstaller.contains("--skip-app-recreate"));
+        assertTrue(agentInstaller.contains("SKIP_APP_RECREATE"));
+    }
 }

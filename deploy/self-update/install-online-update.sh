@@ -4,8 +4,18 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(realpath "${1:-$SCRIPT_DIR/../..}")"
+SKIP_APP_RECREATE="${2:-}"
 
-if [[ $EUID -ne 0 ]]; then exec sudo -- "$0" "$PROJECT_DIR"; fi
+if [[ -n "$SKIP_APP_RECREATE" && "$SKIP_APP_RECREATE" != "--skip-app-recreate" ]]; then
+    echo "未知参数: $SKIP_APP_RECREATE" >&2
+    exit 2
+fi
+
+if [[ $EUID -ne 0 ]]; then
+    args=("$PROJECT_DIR")
+    [[ -n "$SKIP_APP_RECREATE" ]] && args+=("$SKIP_APP_RECREATE")
+    exec sudo -- "$0" "${args[@]}"
+fi
 
 for command in docker systemctl python3 realpath; do command -v "$command" >/dev/null; done
 [[ -f "$PROJECT_DIR/compose.yaml" && -f "$PROJECT_DIR/.env" ]]
@@ -46,9 +56,11 @@ chmod 0644 "$UPDATE_DIR/agent.ready"
 systemctl daemon-reload
 systemctl enable --now xianyu-plus-update.path
 
-cd "$PROJECT_DIR"
-export APP_GIT_SHA="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
-docker compose up -d --build --no-deps --force-recreate app
+if [[ "$SKIP_APP_RECREATE" != "--skip-app-recreate" ]]; then
+    cd "$PROJECT_DIR"
+    export APP_GIT_SHA="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
+    docker compose up -d --build --no-deps --force-recreate app
+fi
 
 echo
 echo "XianYuPlus 在线更新代理已安装。"

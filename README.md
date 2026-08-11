@@ -100,7 +100,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-安装脚本会创建 `.env`、生成运行所需密钥、构建镜像并启动 MySQL 与应用。完成后访问：
+安装脚本会创建 `.env`、生成运行所需密钥、构建镜像并启动 MySQL 与应用。在使用 `systemd` 的飞牛 OS/Linux 宿主机上，一键安装还会自动启用网页在线更新代理。完成后访问：
 
 ```text
 http://你的设备 IP:12400
@@ -119,7 +119,7 @@ cd ~/xianyu-Plus
 
 ### 飞牛 OS 网页在线更新
 
-升级到 V2.2.5 或更高版本后，在项目目录执行一次：
+使用新版一键安装命令时，脚本会在支持 `systemd` 的宿主机上自动启用网页在线更新。已有部署若在版本详情中提示“在线更新代理未启用”，请在项目目录执行一次：
 
 ```bash
 sudo ./deploy/self-update/install-online-update.sh

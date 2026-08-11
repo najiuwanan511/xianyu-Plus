@@ -82,10 +82,41 @@ for attempt in $(seq 1 90); do
     sleep 2
 done
 
+install_online_update_agent() {
+    if [ ! -d /run/systemd/system ]; then
+        echo "当前宿主机未使用 systemd，已跳过网页在线更新代理。"
+        return 0
+    fi
+    for command in systemctl python3 realpath; do
+        if ! command -v "$command" >/dev/null 2>&1; then
+            echo "缺少 $command，已跳过网页在线更新代理。" >&2
+            return 0
+        fi
+    done
+    if [ "$EUID" -ne 0 ]; then
+        if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true >/dev/null 2>&1; then
+            echo "网页在线更新代理需要宿主机管理员权限，请安装后执行："
+            echo "cd '$ROOT_DIR' && sudo ./deploy/self-update/install-online-update.sh"
+            return 0
+        fi
+    fi
+
+    echo "正在启用网页在线更新..."
+    if ! ./deploy/self-update/install-online-update.sh "$ROOT_DIR" --skip-app-recreate; then
+        echo "网页在线更新代理安装失败，应用仍可正常使用。请稍后手动执行：" >&2
+        echo "cd '$ROOT_DIR' && sudo ./deploy/self-update/install-online-update.sh" >&2
+    fi
+}
+
+install_online_update_agent
 docker compose ps
 
 echo
 echo "XianYuPlus 已启动: http://localhost:12400"
-echo "飞牛OS启用网页在线更新：sudo ./deploy/self-update/install-online-update.sh"
+if [ -f "$UPDATE_HOST_DIR/agent.ready" ]; then
+    echo "网页在线更新已启用，可在页面顶部的版本详情中直接更新。"
+else
+    echo "飞牛OS启用网页在线更新：sudo ./deploy/self-update/install-online-update.sh"
+fi
 echo "公网部署需先配置 deploy/nginx/certs、ALLOWED_ORIGINS 和 TRUST_PROXY，再执行:"
 echo "docker compose --profile proxy up -d"
