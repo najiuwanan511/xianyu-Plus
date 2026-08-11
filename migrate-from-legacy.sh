@@ -67,7 +67,7 @@ DATABASE_BACKUP_FILE="$LEGACY_DIR/xianyu-plus-migration-backup.$(date +%Y%m%d-%H
 cp "$LEGACY_DIR/.env" "$BACKUP_FILE"
 
 echo "正在备份旧数据库..."
-docker compose --project-directory "$LEGACY_DIR" --env-file "$LEGACY_DIR/.env" exec -T mysql \
+docker compose --project-directory "$LEGACY_DIR" --env-file "$LEGACY_DIR/.env" exec -T --interactive=false mysql \
     sh -c 'mysqldump --single-transaction -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
     | gzip > "$DATABASE_BACKUP_FILE"
 [ -s "$DATABASE_BACKUP_FILE" ] || fail "数据库备份文件为空，已取消迁移"
