@@ -49,6 +49,39 @@ chmod 1777 "$UPDATE_HOST_DIR"
 
 export APP_GIT_SHA="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
 docker compose up -d --build --remove-orphans
+
+repair_failed_v21() {
+    local failed
+    failed="$(docker compose exec -T --interactive=false mysql sh -c 'mysql -N -s -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e "SELECT COUNT(*) FROM flyway_schema_history WHERE version='"'"'21'"'"' AND success=0"' 2>/dev/null || true)"
+    failed="${failed//$'\r'/}"
+    if [ "$failed" != "1" ]; then
+        return 1
+    fi
+    echo "检测到 V21 黑名单迁移失败，正在自动兼容修复..."
+    docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' < deploy/sql/repair-v21-buyer-blacklist.sql
+}
+
+echo "正在等待 XianYuPlus 通过健康检查..."
+APP_REPAIR_ATTEMPTED=0
+for attempt in $(seq 1 90); do
+    APP_CONTAINER_ID="$(docker compose ps -q app)"
+    APP_HEALTH="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$APP_CONTAINER_ID" 2>/dev/null || true)"
+    if [ "$APP_HEALTH" = "healthy" ]; then
+        break
+    fi
+    if [ "$APP_REPAIR_ATTEMPTED" -eq 0 ] && repair_failed_v21; then
+        APP_REPAIR_ATTEMPTED=1
+        docker compose up -d --no-build --no-deps --force-recreate app
+        continue
+    fi
+    if [ "$attempt" -eq 90 ]; then
+        echo "XianYuPlus 未能通过健康检查。" >&2
+        docker compose logs --no-color --tail=120 app >&2
+        exit 1
+    fi
+    sleep 2
+done
+
 docker compose ps
 
 echo
