@@ -36,6 +36,7 @@ COPY --from=frontend-build /app/vue-code/../src/main/resources/static src/main/r
 COPY --from=frontend-build /app/vue-code/src vue-code/src
 
 # 更新脚本回归测试需要读取脚本源码；仅复制到临时构建层，不进入最终运行镜像
+COPY install.sh ./install.sh
 COPY update.sh ./update.sh
 COPY compose.yaml Dockerfile .env.example ./
 COPY .github/workflows/publish-container.yml .github/workflows/publish-container.yml
