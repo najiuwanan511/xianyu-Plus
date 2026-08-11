@@ -106,8 +106,7 @@ public class AutoDeliveryConfigServiceImpl implements AutoDeliveryConfigService 
                 if (skuId != null && !skuId.isEmpty()) {
                     config = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdAndSkuId(
                             reqDTO.getXianyuAccountId(), reqDTO.getXyGoodsId(), skuId);
-                }
-                if (config == null) {
+                } else {
                     config = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdNoSku(
                             reqDTO.getXianyuAccountId(), reqDTO.getXyGoodsId());
                 }
@@ -181,7 +180,7 @@ public class AutoDeliveryConfigServiceImpl implements AutoDeliveryConfigService 
         }
         int deleted = autoDeliveryConfigMapper.deleteByAccountIdAndGoodsIdAndSkuId(
                 xianyuAccountId, xyGoodsId.trim(), normalizedSkuId);
-        return ResultObject.success(null, deleted > 0 ? "规格已恢复使用商品默认规则" : "规格当前已使用商品默认规则");
+        return ResultObject.success(null, deleted > 0 ? "规格配置已删除，后续订单将暂停自动发货" : "该规格当前未配置自动发货");
     }
 
     private String validateSkuDeliveryConfig(AutoDeliveryConfigReqDTO request, String skuId) {

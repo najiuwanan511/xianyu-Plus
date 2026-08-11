@@ -1,6 +1,9 @@
 package com.xianyusmart.service.impl;
 
+import com.xianyusmart.common.ResultObject;
 import com.xianyusmart.controller.dto.AutoDeliveryConfigReqDTO;
+import com.xianyusmart.controller.dto.AutoDeliveryConfigQueryReqDTO;
+import com.xianyusmart.controller.dto.AutoDeliveryConfigRespDTO;
 import com.xianyusmart.entity.XianyuGoodsAutoDeliveryConfig;
 import com.xianyusmart.entity.XianyuGoodsSku;
 import com.xianyusmart.entity.XianyuKamiConfig;
@@ -14,8 +17,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -82,6 +87,23 @@ class AutoDeliveryConfigServiceImplTest {
 
         assertEquals(500, result.getCode());
         assertEquals("选择的卡密库不属于当前账号", result.getMsg());
+    }
+
+    @Test
+    void doesNotUseTheDefaultConfigWhenLoadingASpecificSku() {
+        XianyuGoodsAutoDeliveryConfigMapper configMapper = mock(XianyuGoodsAutoDeliveryConfigMapper.class);
+        AutoDeliveryConfigServiceImpl service = service(configMapper,
+                mock(XianyuKamiConfigMapper.class), mock(GoodsSkuService.class));
+
+        AutoDeliveryConfigQueryReqDTO request = new AutoDeliveryConfigQueryReqDTO();
+        request.setXianyuAccountId(7L);
+        request.setXyGoodsId("goods-1");
+        request.setSkuId("sku-year");
+
+        ResultObject<AutoDeliveryConfigRespDTO> result = service.getConfig(request);
+
+        assertNull(result.getData());
+        verify(configMapper, never()).findByAccountIdAndGoodsIdNoSku(7L, "goods-1");
     }
 
     private AutoDeliveryConfigServiceImpl service(XianyuGoodsAutoDeliveryConfigMapper configMapper,

@@ -17,6 +17,7 @@ import com.xianyusmart.service.DeliveryAttemptResult;
 import com.xianyusmart.service.OrderService;
 import com.xianyusmart.service.RedFlowerService;
 import com.xianyusmart.service.NotificationChannelService;
+import com.xianyusmart.service.GoodsSkuService;
 import com.xianyusmart.mapper.XianyuGoodsInfoMapper;
 import com.xianyusmart.entity.XianyuGoodsInfo;
 import com.xianyusmart.entity.XianyuAccount;
@@ -72,6 +73,9 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
     
     @Autowired
     private XianyuGoodsAutoDeliveryConfigMapper autoDeliveryConfigMapper;
+
+    @Autowired
+    private GoodsSkuService goodsSkuService;
     
     @Autowired
     private XianyuGoodsOrderMapper orderMapper;
@@ -211,7 +215,17 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 return;
             }
             
-            XianyuGoodsAutoDeliveryConfig deliveryConfig = getAutoDeliveryConfig(accountId, xyGoodsId);
+            OrderDetailFetcher.OrderDetailInfo orderDetail = orderDetailFetcher.fetch(accountId, xyGoodsId, orderId);
+            XianyuGoodsAutoDeliveryConfig deliveryConfig;
+            try {
+                deliveryConfig = resolveDeliveryConfig(accountId, xyGoodsId,
+                        orderDetail == null ? null : orderDetail.skuId);
+            } catch (IllegalStateException e) {
+                log.warn("【账号{}】旧发货入口规格校验失败: xyGoodsId={}, reason={}",
+                        accountId, xyGoodsId, e.getMessage());
+                recordAutoDelivery(accountId, xyGoodsId, buyerUserId, buyerUserName, null, 0, null, orderId);
+                return;
+            }
             if (deliveryConfig == null || deliveryConfig.getAutoDeliveryContent() == null || 
                     deliveryConfig.getAutoDeliveryContent().isEmpty()) {
                 log.warn("【账号{}】商品未配置自动发货内容: xyGoodsId={}", accountId, xyGoodsId);
@@ -227,7 +241,6 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             HumanLikeDelayUtils.typingDelay(content.length());
             
             String cid = sId.replace("@goofish", "");
-            OrderDetailFetcher.OrderDetailInfo orderDetail = orderDetailFetcher.fetch(accountId, xyGoodsId, orderId);
             String verifiedBuyerId = requireVerifiedBuyerRecipientId(buyerUserId,
                     orderDetail == null ? null : orderDetail.buyerUserId);
             String toId = requireExternalBuyerRecipientId(accountId, verifiedBuyerId);
@@ -457,16 +470,11 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             int buyNum = orderDetail != null && orderDetail.buyNum != null && orderDetail.buyNum > 0
                     ? orderDetail.buyNum : (record.getBuyNum() != null && record.getBuyNum() > 0 ? record.getBuyNum() : 1);
 
-            XianyuGoodsAutoDeliveryConfig deliveryConfig = null;
-            if (orderSkuId != null && !orderSkuId.isBlank()) {
-                deliveryConfig = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdAndSkuId(
-                        accountId, xyGoodsId, orderSkuId);
-            }
-            if (deliveryConfig == null) {
-                deliveryConfig = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdNoSku(accountId, xyGoodsId);
-            }
-            if (deliveryConfig == null) {
-                return com.xianyusmart.common.ResultObject.failed("该商品没有可用的发货配置");
+            XianyuGoodsAutoDeliveryConfig deliveryConfig;
+            try {
+                deliveryConfig = resolveDeliveryConfig(accountId, xyGoodsId, orderSkuId);
+            } catch (IllegalStateException e) {
+                return com.xianyusmart.common.ResultObject.failed(e.getMessage());
             }
 
             int deliveryMode = deliveryConfig.getDeliveryMode() == null ? 1 : deliveryConfig.getDeliveryMode();
@@ -615,17 +623,14 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                         orderDetail.xyGoodsId, xyGoodsId);
             }
 
-            XianyuGoodsAutoDeliveryConfig deliveryConfig = null;
-            if (orderSkuId != null && !orderSkuId.isEmpty()) {
-                deliveryConfig = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdAndSkuId(accountId, xyGoodsId, orderSkuId);
-            }
-            if (deliveryConfig == null) {
-                deliveryConfig = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdNoSku(accountId, xyGoodsId);
-            }
-
-            if (deliveryConfig == null) {
-                log.warn("【账号{}】商品无匹配的发货配置: xyGoodsId={}, skuId={}", accountId, xyGoodsId, orderSkuId);
-                updateRecordState(recordId, -1, null, "无匹配的发货配置");
+            XianyuGoodsAutoDeliveryConfig deliveryConfig;
+            try {
+                deliveryConfig = resolveDeliveryConfig(accountId, xyGoodsId, orderSkuId);
+            } catch (IllegalStateException e) {
+                log.warn("【账号{}】商品规格发货配置校验失败: xyGoodsId={}, skuId={}, reason={}",
+                        accountId, xyGoodsId, orderSkuId, e.getMessage());
+                updateRecordState(recordId, -1, null, e.getMessage());
+                emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, e.getMessage());
                 return;
             }
 
@@ -871,6 +876,29 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
             }
         }
+    }
+
+    XianyuGoodsAutoDeliveryConfig resolveDeliveryConfig(Long accountId, String xyGoodsId, String orderSkuId) {
+        if (goodsSkuService.countByAccountIdAndXyGoodsId(accountId, xyGoodsId) == 0) {
+            return autoDeliveryConfigMapper.findByAccountIdAndGoodsIdNoSku(accountId, xyGoodsId);
+        }
+        if (orderSkuId == null || orderSkuId.isBlank()) {
+            throw new IllegalStateException("订单缺少商品规格，已停止自动发货");
+        }
+
+        String normalizedSkuId = orderSkuId.trim();
+        boolean skuExists = goodsSkuService.listByAccountIdAndXyGoodsId(accountId, xyGoodsId).stream()
+                .anyMatch(sku -> normalizedSkuId.equals(sku.getSkuId()));
+        if (!skuExists) {
+            throw new IllegalStateException("订单商品规格无效，已停止自动发货");
+        }
+
+        XianyuGoodsAutoDeliveryConfig config = autoDeliveryConfigMapper
+                .findByAccountIdAndGoodsIdAndSkuId(accountId, xyGoodsId, normalizedSkuId);
+        if (config == null) {
+            throw new IllegalStateException("当前商品规格未配置自动发货");
+        }
+        return config;
     }
 
     private ImageDeliveryResult sendDeliveryImages(Long accountId, String xyGoodsId, String cid, String toId,

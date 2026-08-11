@@ -2,9 +2,13 @@ package com.xianyusmart.service.impl;
 
 import com.xianyusmart.entity.XianyuGoodsConfig;
 import com.xianyusmart.entity.XianyuGoodsOrder;
+import com.xianyusmart.entity.XianyuGoodsSku;
+import com.xianyusmart.entity.XianyuGoodsAutoDeliveryConfig;
+import com.xianyusmart.mapper.XianyuGoodsAutoDeliveryConfigMapper;
 import com.xianyusmart.mapper.XianyuGoodsConfigMapper;
 import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
 import com.xianyusmart.service.BuyerBlacklistService;
+import com.xianyusmart.service.GoodsSkuService;
 import com.xianyusmart.service.delivery.OrderDetailFetcher;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -18,6 +22,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -64,6 +69,80 @@ class AutoDeliveryServiceImplTest {
     void acceptsDeliveryOnlyWhenTheChatBuyerMatchesTheOrderBuyer() {
         assertEquals("buyer-42", AutoDeliveryServiceImpl.requireVerifiedBuyerRecipientId(
                 "buyer-42@goofish", "buyer-42"));
+    }
+
+    @Test
+    void usesDefaultConfigForGoodsWithoutSkus() {
+        GoodsSkuService goodsSkuService = mock(GoodsSkuService.class);
+        XianyuGoodsAutoDeliveryConfigMapper configMapper = mock(XianyuGoodsAutoDeliveryConfigMapper.class);
+        XianyuGoodsAutoDeliveryConfig defaultConfig = new XianyuGoodsAutoDeliveryConfig();
+        when(goodsSkuService.countByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(0);
+        when(configMapper.findByAccountIdAndGoodsIdNoSku(7L, "goods-1")).thenReturn(defaultConfig);
+
+        AutoDeliveryServiceImpl service = deliveryService(goodsSkuService, configMapper);
+
+        assertSame(defaultConfig, service.resolveDeliveryConfig(7L, "goods-1", null));
+    }
+
+    @Test
+    void rejectsMultiSkuOrderWithoutSkuId() {
+        GoodsSkuService goodsSkuService = mock(GoodsSkuService.class);
+        when(goodsSkuService.countByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(2);
+
+        AutoDeliveryServiceImpl service = deliveryService(goodsSkuService, mock(XianyuGoodsAutoDeliveryConfigMapper.class));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> service.resolveDeliveryConfig(7L, "goods-1", " "));
+        assertEquals("订单缺少商品规格，已停止自动发货", error.getMessage());
+    }
+
+    @Test
+    void rejectsMissingMultiSkuConfigInsteadOfFallingBackToDefault() {
+        GoodsSkuService goodsSkuService = mock(GoodsSkuService.class);
+        XianyuGoodsAutoDeliveryConfigMapper configMapper = mock(XianyuGoodsAutoDeliveryConfigMapper.class);
+        XianyuGoodsSku sku = new XianyuGoodsSku();
+        sku.setSkuId("sku-year");
+        when(goodsSkuService.countByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(1);
+        when(goodsSkuService.listByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(java.util.List.of(sku));
+
+        AutoDeliveryServiceImpl service = deliveryService(goodsSkuService, configMapper);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> service.resolveDeliveryConfig(7L, "goods-1", "sku-year"));
+        assertEquals("当前商品规格未配置自动发货", error.getMessage());
+        verify(configMapper, never()).findByAccountIdAndGoodsIdNoSku(7L, "goods-1");
+    }
+
+    @Test
+    void rejectsUnknownSkuFromTheOrder() {
+        GoodsSkuService goodsSkuService = mock(GoodsSkuService.class);
+        XianyuGoodsSku sku = new XianyuGoodsSku();
+        sku.setSkuId("sku-month");
+        when(goodsSkuService.countByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(1);
+        when(goodsSkuService.listByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(java.util.List.of(sku));
+
+        AutoDeliveryServiceImpl service = deliveryService(goodsSkuService, mock(XianyuGoodsAutoDeliveryConfigMapper.class));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> service.resolveDeliveryConfig(7L, "goods-1", "sku-invalid"));
+        assertEquals("订单商品规格无效，已停止自动发货", error.getMessage());
+    }
+
+    @Test
+    void usesOnlyTheMatchingMultiSkuConfig() {
+        GoodsSkuService goodsSkuService = mock(GoodsSkuService.class);
+        XianyuGoodsAutoDeliveryConfigMapper configMapper = mock(XianyuGoodsAutoDeliveryConfigMapper.class);
+        XianyuGoodsSku sku = new XianyuGoodsSku();
+        sku.setSkuId("sku-year");
+        XianyuGoodsAutoDeliveryConfig skuConfig = new XianyuGoodsAutoDeliveryConfig();
+        when(goodsSkuService.countByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(1);
+        when(goodsSkuService.listByAccountIdAndXyGoodsId(7L, "goods-1")).thenReturn(java.util.List.of(sku));
+        when(configMapper.findByAccountIdAndGoodsIdAndSkuId(7L, "goods-1", "sku-year")).thenReturn(skuConfig);
+
+        AutoDeliveryServiceImpl service = deliveryService(goodsSkuService, configMapper);
+
+        assertSame(skuConfig, service.resolveDeliveryConfig(7L, "goods-1", "sku-year"));
+        verify(configMapper, never()).findByAccountIdAndGoodsIdNoSku(7L, "goods-1");
     }
 
     @Test
@@ -134,5 +213,13 @@ class AutoDeliveryServiceImplTest {
                 eq(11L), eq(0), isNull(),
                 argThat(reason -> reason.startsWith(AutoDeliveryServiceImpl.BUYER_VERIFICATION_PENDING_PREFIX)
                         && reason.contains("Cookie")));
+    }
+
+    private AutoDeliveryServiceImpl deliveryService(GoodsSkuService goodsSkuService,
+                                                     XianyuGoodsAutoDeliveryConfigMapper configMapper) {
+        AutoDeliveryServiceImpl service = new AutoDeliveryServiceImpl();
+        ReflectionTestUtils.setField(service, "goodsSkuService", goodsSkuService);
+        ReflectionTestUtils.setField(service, "autoDeliveryConfigMapper", configMapper);
+        return service;
     }
 }
