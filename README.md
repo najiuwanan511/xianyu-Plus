@@ -116,7 +116,7 @@ cd ~/xianyu-Plus
 curl -fsSL https://raw.githubusercontent.com/najiuwanan511/xianyu-Plus/main/migrate-from-legacy.sh | bash
 ```
 
-迁移会先在原项目目录生成压缩数据库备份，再保留现有数据库、账号、商品、订单、卡券和应用数据；仅停止旧容器并从新仓库启动服务。迁移完成后，后续网页更新与 `./update.sh` 都使用新仓库。
+迁移会先在原项目目录生成压缩数据库备份，再保留现有数据库、账号、商品、订单、卡券和应用数据；仅停止旧容器并从新仓库启动服务。检测到已安装的网页在线更新代理时，脚本会同步切换它。迁移完成后，后续网页更新与 `./update.sh` 都使用新仓库。
 
 ### 飞牛 OS 网页在线更新
 

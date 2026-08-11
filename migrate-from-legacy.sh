@@ -79,6 +79,14 @@ echo "正在启动新版本并执行数据兼容检查..."
 cd "$TARGET_DIR"
 ./update.sh
 
+if [ -f /etc/systemd/system/xianyu-plus-update.path ] || [ -f /etc/xianyu-plus/update-agent.env ]; then
+    echo "检测到在线更新代理，正在切换到新项目目录..."
+    if ! ./deploy/self-update/install-online-update.sh "$TARGET_DIR"; then
+        echo "警告: 新服务已启动，但在线更新代理尚未切换。" >&2
+        echo "请在新项目目录执行: sudo ./deploy/self-update/install-online-update.sh" >&2
+    fi
+fi
+
 echo
 echo "迁移完成。数据卷和原项目目录均已保留。"
 echo "新项目目录: $TARGET_DIR"
