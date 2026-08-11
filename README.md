@@ -83,6 +83,16 @@ flowchart LR
 
 请先准备 Docker Engine（或 Docker Desktop）与 Docker Compose v2。
 
+一键安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/najiuwanan511/xianyu-Plus/main/install-online.sh | bash
+```
+
+安装脚本会将项目下载到 `~/xianyu-plus` 并启动服务。若该目录已经存在，脚本会停止，不会覆盖已有文件。
+
+手动安装：
+
 ```bash
 git clone https://github.com/najiuwanan511/xianyu-Plus.git
 cd xianyu-Plus
@@ -106,17 +116,6 @@ cd ~/xianyu-Plus
 ```
 
 更新脚本会保留现有数据卷并重新构建服务。更新前如有重要业务数据，建议先完成备份。
-
-### 从旧仓库迁移
-
-旧仓库 `najiuwanan/xianyu-Plus` 已无法继续发布更新。已部署旧版的用户，请进入原项目目录后执行一次迁移命令：
-
-```bash
-cd ~/xianyu-Plus
-curl -fsSL https://raw.githubusercontent.com/najiuwanan511/xianyu-Plus/migration-v2/migrate-from-legacy.sh | bash
-```
-
-迁移会先在原项目目录生成压缩数据库备份，再保留现有数据库、账号、商品、订单、卡券和应用数据；仅停止旧容器并从新仓库启动服务。检测到已安装的网页在线更新代理时，脚本会同步切换它。迁移完成后，后续网页更新与 `./update.sh` 都使用新仓库。
 
 ### 飞牛 OS 网页在线更新
 
