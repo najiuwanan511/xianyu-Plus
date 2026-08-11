@@ -62,17 +62,6 @@ service.interceptors.response.use(
   (response: AxiosResponse<ApiResponse<any>>) => {
     const res = response.data
 
-    // 401未登录 -> 跳转登录页
-    if (res.code === 401) {
-      clearAuthToken()
-      // 避免在登录页重复跳转
-      if (!window.location.pathname.includes('/login')) {
-        toast.error(res.msg || '登录已过期，请重新登录')
-        window.location.href = '/login'
-      }
-      return Promise.reject(new Error(res.msg || '未登录'))
-    }
-
     // 特殊处理：1001是滑块验证码，需要业务代码自己处理，不在这里拦截
     if (res.code === 1001) {
       return response // 直接返回，让业务代码处理

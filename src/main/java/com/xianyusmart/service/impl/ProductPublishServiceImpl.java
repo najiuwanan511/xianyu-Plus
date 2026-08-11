@@ -104,7 +104,7 @@ public class ProductPublishServiceImpl implements ProductPublishService {
             throw new BusinessException(400, "位置坐标不正确");
         }
         String cookie = accountService.getCookieByAccountId(accountId);
-        if (cookie == null || cookie.isBlank()) throw new BusinessException(401, "账号 Cookie 不可用");
+        if (cookie == null || cookie.isBlank()) throw new BusinessException(409, "账号 Cookie 不可用，请先到账号管理更新凭证");
         XianyuApiCallUtils.ApiCallResult result = apiCallUtils.callApiWithRetry(accountId,
                 PublishCapabilityProbeService.LOCATION_API,
                 Map.of("longitude", queryLongitude, "latitude", queryLatitude), cookie, "1.0", null, null);

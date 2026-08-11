@@ -15,6 +15,7 @@ const route = useRoute()
 const router = useRouter()
 
 const accounts = ref<Account[]>([])
+const publishAccounts = computed(() => accounts.value.filter(account => account.status === 1))
 const selectedAccountId = ref<number | null>(null)
 const probing = ref(false)
 const publishing = ref(false)
@@ -121,7 +122,10 @@ const locationSourceLabel = (source: string) => ({ SELECTED: '平台默认', COM
 const loadAccounts = async () => {
   const result = await getAccountList()
   accounts.value = result.data?.accounts || []
-  selectedAccountId.value = accounts.value[0]?.id || null
+  selectedAccountId.value = publishAccounts.value[0]?.id || null
+  if (!selectedAccountId.value && accounts.value.length) {
+    toast.warning('没有状态正常的发布账号，请先到账号管理恢复账号')
+  }
 }
 
 const loadLocations = async (coordinates?: { longitude: number; latitude: number }) => {
@@ -567,7 +571,7 @@ onMounted(async () => {
   await loadAccounts()
   const id = Number(route.query.materialId)
   if (Number.isInteger(id) && id > 0) await loadMaterial(id)
-  if (batchMode.value) targetAccountIds.value = accounts.value.map(account => account.id)
+  if (batchMode.value) targetAccountIds.value = publishAccounts.value.map(account => account.id)
 })
 </script>
 
@@ -587,7 +591,7 @@ onMounted(async () => {
     <section class="publish-card">
       <h2>1. 账号与商品内容</h2>
       <div class="form-grid">
-        <label><span>发布账号</span><select v-model="selectedAccountId"><option :value="null" disabled>请选择</option><option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.accountNote || account.unb }}</option></select></label>
+        <label><span>发布账号</span><select v-model="selectedAccountId"><option :value="null" disabled>请选择</option><option v-for="account in publishAccounts" :key="account.id" :value="account.id">{{ account.accountNote || account.unb }}</option></select></label>
         <label class="wide"><span>商品标题</span><input v-model="form.title" maxlength="60" placeholder="例如：iPhone 15 Pro 256G 原装二手手机"></label>
         <button class="probe-button" type="button" :disabled="probing" @click="probe">{{ probing ? '识别中…' : '识别类目' }}</button>
         <div class="description-workspace full">
@@ -624,7 +628,7 @@ onMounted(async () => {
       <div class="section-title"><div><h2>多账号发布</h2><p>每个账号分别读取类目、属性和地址，确认后按顺序逐个发布。</p></div><label class="mode-switch"><input v-model="batchMode" type="checkbox">启用多账号发布</label></div>
       <template v-if="batchMode">
         <div class="account-checks">
-          <label v-for="account in accounts" :key="account.id"><input v-model="targetAccountIds" type="checkbox" :value="account.id">{{ account.accountNote || account.unb }}</label>
+          <label v-for="account in publishAccounts" :key="account.id"><input v-model="targetAccountIds" type="checkbox" :value="account.id">{{ account.accountNote || account.unb }}</label>
         </div>
         <div class="batch-tools">
           <button type="button" :disabled="preparingBatch" @click="prepareBatch">{{ preparingBatch ? '逐账号预检中…' : '预检所选账号' }}</button>

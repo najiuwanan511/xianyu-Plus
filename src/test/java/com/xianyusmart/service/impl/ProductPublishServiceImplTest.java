@@ -209,6 +209,18 @@ class ProductPublishServiceImplTest {
         verify(probeService, never()).check(any(), any());
     }
 
+    @Test
+    void shouldTreatMissingXianyuCookieAsBusinessConflict() {
+        when(accountService.getCookieByAccountId(7L)).thenReturn(" ");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.listLocations(7L, null, null));
+
+        assertEquals(409, exception.getCode());
+        assertTrue(exception.getMessage().contains("Cookie"));
+        verify(apiCallUtils, never()).callApiWithRetry(any(), any(), any(), any(), any(), any(), any());
+    }
+
     private ProductPublishReqDTO request() {
         ProductPublishReqDTO request = new ProductPublishReqDTO();
         request.setAccountId(7L);
