@@ -38,6 +38,7 @@ find_legacy_volume() {
 
 require_command docker
 require_command git
+require_command gzip
 docker compose version >/dev/null 2>&1 || fail "需要 Docker Compose v2"
 
 LEGACY_DIR="$(cd "$LEGACY_DIR" && pwd)"
@@ -62,7 +63,14 @@ set_env UPDATE_GITHUB_REPOSITORY "$NEW_UPDATE_REPOSITORY"
 set_env UPDATE_RELEASE_API "https://api.github.com/repos/${NEW_UPDATE_REPOSITORY}/releases/latest"
 
 BACKUP_FILE="$LEGACY_DIR/.env.before-xianyu-plus-migration.$(date +%Y%m%d-%H%M%S)"
+DATABASE_BACKUP_FILE="$LEGACY_DIR/xianyu-plus-migration-backup.$(date +%Y%m%d-%H%M%S).sql.gz"
 cp "$LEGACY_DIR/.env" "$BACKUP_FILE"
+
+echo "正在备份旧数据库..."
+docker compose --project-directory "$LEGACY_DIR" --env-file "$LEGACY_DIR/.env" exec -T mysql \
+    sh -c 'mysqldump --single-transaction -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
+    | gzip > "$DATABASE_BACKUP_FILE"
+[ -s "$DATABASE_BACKUP_FILE" ] || fail "数据库备份文件为空，已取消迁移"
 
 echo "正在停止旧服务（不会删除数据卷）..."
 docker compose --project-directory "$LEGACY_DIR" --env-file "$LEGACY_DIR/.env" down --remove-orphans
@@ -75,4 +83,5 @@ echo
 echo "迁移完成。数据卷和原项目目录均已保留。"
 echo "新项目目录: $TARGET_DIR"
 echo "旧配置备份: $BACKUP_FILE"
+echo "数据库备份: $DATABASE_BACKUP_FILE"
 echo "后续更新请在新项目目录执行: ./update.sh"
