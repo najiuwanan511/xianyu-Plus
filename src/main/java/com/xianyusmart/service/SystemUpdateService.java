@@ -166,14 +166,22 @@ public class SystemUpdateService {
                 status.put("message", "更新任务已中断，可重新尝试");
             }
 
+            // The host agent removes request.json after a successful update. Do
+            // not keep a completed 100% task visible forever after the app restarts.
+            boolean completed = !requestPending && "SUCCESS".equals(state);
+            if (completed) {
+                state = "IDLE";
+            }
+
             response.setTaskId(stringValue(status.get("taskId"), null));
             response.setVersion(stringValue(status.get("version"), null));
             response.setStatus(state);
-            response.setProgress(intValue(status.get("progress"), 0));
-            response.setMessage(stringValue(status.get("message"),
-                    available ? "暂无在线更新任务" : "在线更新代理尚未安装"));
-            response.setDownloadedBytes(longValue(status.get("downloadedBytes"), 0L));
-            response.setTotalBytes(longValue(status.get("totalBytes"), 0L));
+            response.setProgress(completed ? 0 : intValue(status.get("progress"), 0));
+            response.setMessage(completed
+                    ? "暂无在线更新任务"
+                    : stringValue(status.get("message"), available ? "暂无在线更新任务" : "在线更新代理尚未安装"));
+            response.setDownloadedBytes(completed ? 0L : longValue(status.get("downloadedBytes"), 0L));
+            response.setTotalBytes(completed ? 0L : longValue(status.get("totalBytes"), 0L));
             response.setRequestedAt(stringValue(status.get("requestedAt"), null));
             response.setUpdatedAt(stringValue(status.get("updatedAt"), null));
             response.setActive(requestPending && ACTIVE_UPDATE_STATUSES.contains(state));
@@ -369,7 +377,7 @@ public class SystemUpdateService {
     }
     private void fetchLatestVersion(String normalizedRepository, SystemUpdateStatusRespDTO status) {
         try {
-            String releasesUrl = "https://api.github.com/repos/" + normalizedRepository + "/releases?per_page=100";
+            String releasesUrl = "https://api.github.com/repos/" + normalizedRepository + "/releases/latest";
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(releasesUrl))
                     .timeout(Duration.ofSeconds(8))
@@ -379,23 +387,15 @@ public class SystemUpdateService {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200) {
-                JsonNode releases = objectMapper.readTree(response.body());
-                if (releases.isArray() && !releases.isEmpty()) {
-                    String latest = "";
-                    String latestUrl = "";
-                    for (JsonNode release : releases) {
-                        if (release.path("draft").asBoolean(false) || release.path("prerelease").asBoolean(false)) {
-                            continue;
+                JsonNode release = objectMapper.readTree(response.body());
+                if (!release.path("draft").asBoolean(false) && !release.path("prerelease").asBoolean(false)) {
+                    String latest = normalizeVersion(release.path("tag_name").asText(""));
+                    if (isSemanticVersion(latest)) {
+                        status.setLatestVersion(latest);
+                        String latestUrl = release.path("html_url").asText("");
+                        if (!latestUrl.isBlank()) {
+                            status.setUpdateUrl(latestUrl);
                         }
-                        String candidate = normalizeVersion(release.path("tag_name").asText(""));
-                        if (isSemanticVersion(candidate) && (latest.isBlank() || compareVersions(candidate, latest) > 0)) {
-                            latest = candidate;
-                            latestUrl = release.path("html_url").asText("");
-                        }
-                    }
-                    status.setLatestVersion(latest);
-                    if (!latestUrl.isBlank()) {
-                        status.setUpdateUrl(latestUrl);
                     }
                 }
             }

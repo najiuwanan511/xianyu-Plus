@@ -86,4 +86,21 @@ class SystemUpdateServiceTest {
         assertEquals(42, status.getProgress());
         assertEquals(1000, status.getTotalBytes());
     }
+
+    @Test
+    void completedOnlineUpdateIsClearedAfterTheAgentRemovesItsRequest(@TempDir Path directory) throws Exception {
+        ReflectionTestUtils.setField(service, "updateRequestDir", directory.toString());
+        Files.writeString(directory.resolve("agent.ready"), "ready");
+        Files.writeString(directory.resolve("status.json"), """
+                {"taskId":"11111111-1111-1111-1111-111111111111","version":"2.2.10","status":"SUCCESS","progress":100,
+                 "message":"在线更新完成","downloadedBytes":1000,"totalBytes":1000}
+                """);
+
+        var status = service.onlineUpdateStatus();
+
+        assertFalse(status.isActive());
+        assertEquals("IDLE", status.getStatus());
+        assertEquals(0, status.getProgress());
+        assertEquals("暂无在线更新任务", status.getMessage());
+    }
 }

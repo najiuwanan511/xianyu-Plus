@@ -32,6 +32,12 @@ const selectedRelease = computed(() => ({
 }))
 
 const displayVersion = (version?: string) => version ? `V${version.replace(/^[vV]/, '')}` : '未知版本'
+const latestVersionDisplay = computed(() => updateStatus.value?.latestVersion
+  ? displayVersion(updateStatus.value.latestVersion)
+  : '暂未获取')
+const versionDialogTitle = computed(() => updateStatus.value?.latestVersion
+  ? `XianYuPlus ${latestVersionDisplay.value}`
+  : 'XianYuPlus 版本信息')
 const releaseHighlights = computed(() => {
   if (updateStatus.value?.updateHighlights?.length) return updateStatus.value.updateHighlights
   if ((updateStatus.value?.latestVersion || updateStatus.value?.currentVersion || '').replace(/^[vV]/, '').startsWith('2.')) {
@@ -60,9 +66,10 @@ const updateSummary = computed(() => {
   if (!updateStatus.value) return '正在检查 GitHub 更新…'
   const current = displayVersion(updateStatus.value.currentVersion)
   const latest = displayVersion(updateStatus.value.latestVersion)
-  if (updateStatus.value.currentVersion || updateStatus.value.latestVersion) {
+  if (updateStatus.value.currentVersion && updateStatus.value.latestVersion) {
     return `当前 ${current} · 最新 ${latest}${updateStatus.value.updateAvailable ? ' · 可更新' : ''}`
   }
+  if (updateStatus.value.currentVersion) return `当前 ${current} · GitHub 版本暂未获取`
   return updateStatus.value.message
 })
 
@@ -258,16 +265,16 @@ onUnmounted(() => {
     <div v-if="versionDialogVisible && updateStatus" class="version-mask" @click.self="versionDialogVisible = false">
       <section class="version-dialog" role="dialog" aria-modal="true" aria-labelledby="version-dialog-title">
         <header>
-          <div><span>版本更新</span><h2 id="version-dialog-title">XianYuPlus {{ displayVersion(updateStatus.latestVersion) }}</h2></div>
+          <div><span>版本更新</span><h2 id="version-dialog-title">{{ versionDialogTitle }}</h2></div>
           <button type="button" aria-label="关闭" @click="versionDialogVisible = false">×</button>
         </header>
         <div class="version-dialog__versions">
           <div><small>当前版本</small><strong>{{ displayVersion(updateStatus.currentVersion) }}</strong><code v-if="updateStatus.currentCommit">{{ updateStatus.currentCommit }}</code></div>
           <span>→</span>
-          <div class="is-latest"><small>GitHub 最新版本</small><strong>{{ displayVersion(updateStatus.latestVersion) }}</strong><code v-if="updateStatus.latestCommit">{{ updateStatus.latestCommit }}</code></div>
+          <div class="is-latest"><small>GitHub 最新版本</small><strong>{{ latestVersionDisplay }}</strong><code v-if="updateStatus.latestCommit">{{ updateStatus.latestCommit }}</code></div>
         </div>
         <p class="version-dialog__status" :class="{ available: updateStatus.updateAvailable }">{{ updateStatus.message }}</p>
-        <div v-if="onlineUpdateStatus && onlineUpdateStatus.status !== 'IDLE'" class="version-dialog__progress" :class="`is-${onlineUpdateStatus.status.toLowerCase()}`">
+        <div v-if="onlineUpdateStatus && (onlineUpdateStatus.active || onlineUpdateStatus.status === 'FAILED')" class="version-dialog__progress" :class="`is-${onlineUpdateStatus.status.toLowerCase()}`">
           <div class="version-dialog__progress-heading">
             <strong>{{ onlineUpdateStatus.message || '在线更新处理中' }}</strong>
             <span>{{ onlineUpdateProgress }}%</span>
