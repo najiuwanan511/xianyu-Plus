@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { generateQRCode, getQRCodeStatus, getQRCodeCookies } from '@/api/qrlogin'
 import { updateCookie } from '@/api/websocket'
 import { showSuccess, showError } from '@/utils'
@@ -24,45 +24,79 @@ const sessionId = ref('')
 const status = ref<QRLoginSession['status']>('pending')
 const statusText = ref('正在生成二维码...')
 const verificationUrl = ref('')
+const isGenerating = ref(false)
+const generationFailed = ref(false)
+const canRegenerate = computed(() => generationFailed.value || ['expired', 'cancelled', 'error', 'not_found'].includes(status.value))
 let pollTimer: number | null = null
 let pollRequestPending = false
+let generationId = 0
+let generatedAt = 0
+let quickExpiryRetries = 0
 
 watch(() => props.modelValue, (newVal) => {
   if (newVal) {
-    generateQR()
+    quickExpiryRetries = 0
+    resetQRState()
+    void generateQR()
   } else {
     stopPolling()
+    generationId++
   }
 })
 
-const generateQR = async () => {
+const resetQRState = () => {
+  stopPolling()
+  qrCodeUrl.value = ''
+  sessionId.value = ''
+  status.value = 'pending'
+  statusText.value = '正在生成二维码...'
+  verificationUrl.value = ''
+  generationFailed.value = false
+  generatedAt = 0
+}
+
+const generateQR = async (automaticRetry = false) => {
+  const currentGeneration = ++generationId
+  resetQRState()
+  isGenerating.value = true
   try {
-    verificationUrl.value = ''
     const response = await generateQRCode()
+    if (currentGeneration !== generationId || !props.modelValue) return
     if (response.code === 0 || response.code === 200) {
       qrCodeUrl.value = response.data?.qrCodeUrl || ''
       sessionId.value = response.data?.sessionId || ''
-      startPolling()
+      if (!response.data?.success || !qrCodeUrl.value || !sessionId.value) {
+        throw new Error(response.data?.message || '二维码数据不完整')
+      }
+      generatedAt = Date.now()
+      statusText.value = '等待扫码...'
+      startPolling(currentGeneration, sessionId.value)
     } else {
       throw new Error(response.msg || '生成二维码失败')
     }
   } catch (error: any) {
+    if (currentGeneration !== generationId || !props.modelValue) return
     console.error('生成二维码失败:', error)
-    showError('生成二维码失败')
+    generationFailed.value = true
+    statusText.value = automaticRetry ? '二维码仍不可用，请手动重新生成或更新 Cookie' : '生成二维码失败，请重试'
+    showError(statusText.value)
+  } finally {
+    if (currentGeneration === generationId) isGenerating.value = false
   }
 }
 
-const startPolling = () => {
-  if (!sessionId.value) {
+const startPolling = (currentGeneration: number, currentSessionId: string) => {
+  if (!currentSessionId) {
     showError('会话ID为空，无法查询状态')
     return
   }
   stopPolling()
   pollTimer = window.setInterval(async () => {
-    if (!sessionId.value || pollRequestPending) return
+    if (currentGeneration !== generationId || !props.modelValue || pollRequestPending) return
     pollRequestPending = true
     try {
-      const response = await getQRCodeStatus(sessionId.value)
+      const response = await getQRCodeStatus(currentSessionId)
+      if (currentGeneration !== generationId || currentSessionId !== sessionId.value) return
       if (response.code === 0 || response.code === 200) {
         const data = response.data
         status.value = data?.status || 'pending'
@@ -82,6 +116,11 @@ const startPolling = () => {
           case 'expired':
             statusText.value = '二维码已过期'
             stopPolling()
+            if (Date.now() - generatedAt < 30000 && quickExpiryRetries < 1) {
+              quickExpiryRetries++
+              statusText.value = '二维码失效，正在自动换一张...'
+              void generateQR(true)
+            }
             break
           case 'verification_required':
             verificationUrl.value = data.verificationUrl || verificationUrl.value
@@ -108,6 +147,7 @@ const stopPolling = () => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  pollRequestPending = false
 }
 
 const handleLoginSuccess = async () => {
@@ -155,7 +195,13 @@ const handleLoginSuccess = async () => {
 
 const handleClose = () => {
   stopPolling()
+  generationId++
   emit('update:modelValue', false)
+}
+
+const regenerateQR = () => {
+  quickExpiryRetries = 0
+  void generateQR()
 }
 
 const switchToManualUpdate = () => {
@@ -187,6 +233,10 @@ const switchToManualUpdate = () => {
             <p v-if="sessionId" class="session-id">会话ID: {{ sessionId }}</p>
           </div>
           <div class="modal-footer">
+            <button v-if="canRegenerate" class="btn btn-primary" :disabled="isGenerating" @click="regenerateQR">
+              {{ isGenerating ? '生成中...' : '重新生成二维码' }}
+            </button>
+            <button v-if="canRegenerate" class="btn btn-secondary" @click="switchToManualUpdate">改用 Cookie 更新</button>
             <button v-if="status === 'verification_required'" class="btn btn-primary" @click="switchToManualUpdate">改用 Cookie 更新</button>
             <button class="btn btn-secondary" @click="handleClose">取消</button>
           </div>
@@ -264,6 +314,7 @@ const switchToManualUpdate = () => {
 
 .modal-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 20px;
@@ -271,6 +322,8 @@ const switchToManualUpdate = () => {
 }
 
 .btn {
+  flex: 1 1 130px;
+  min-width: 0;
   padding: 8px 18px;
   border-radius: 8px;
   font-size: 14px;

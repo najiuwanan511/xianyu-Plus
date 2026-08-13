@@ -82,6 +82,7 @@ export interface Message {
 
 // 二维码登录
 export interface QRLoginSession {
+  success?: boolean
   sessionId: string
   qrCodeUrl: string
   status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'cancelled' | 'verification_required' | 'error' | 'not_found'

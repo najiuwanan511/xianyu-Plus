@@ -28,44 +28,79 @@ const sessionId = ref('')
 const status = ref<QRLoginSession['status']>('pending')
 const statusText = ref('正在生成二维码...')
 const verificationUrl = ref('')
+const isGenerating = ref(false)
+const generationFailed = ref(false)
+const canRegenerate = computed(() => generationFailed.value || ['expired', 'cancelled', 'error', 'not_found'].includes(status.value))
 let pollTimer: number | null = null
 let pollRequestPending = false
+let generationId = 0
+let generatedAt = 0
+let quickExpiryRetries = 0
 
 watch(() => props.modelValue, (newVal) => {
   if (newVal) {
     checkScreenSize()
     window.addEventListener('resize', checkScreenSize)
-    generateQR()
+    quickExpiryRetries = 0
+    resetQRState()
+    void generateQR()
   } else {
     window.removeEventListener('resize', checkScreenSize)
     stopPolling()
+    generationId++
   }
 })
 
-const generateQR = async () => {
+const resetQRState = () => {
+  stopPolling()
+  qrCodeUrl.value = ''
+  sessionId.value = ''
+  status.value = 'pending'
+  statusText.value = '正在生成二维码...'
+  verificationUrl.value = ''
+  generationFailed.value = false
+  generatedAt = 0
+}
+
+const generateQR = async (automaticRetry = false) => {
+  const currentGeneration = ++generationId
+  resetQRState()
+  isGenerating.value = true
   try {
-    verificationUrl.value = ''
     const response = await generateQRCode()
+    if (currentGeneration !== generationId || !props.modelValue) return
     if (response.code === 0 || response.code === 200) {
       qrCodeUrl.value = response.data?.qrCodeUrl || ''
       sessionId.value = response.data?.sessionId || ''
-      startPolling()
+      if (!response.data?.success || !qrCodeUrl.value || !sessionId.value) {
+        throw new Error(response.data?.message || '二维码数据不完整')
+      }
+      generatedAt = Date.now()
+      statusText.value = '等待扫码...'
+      startPolling(currentGeneration, sessionId.value)
     } else {
       throw new Error(response.msg || '生成二维码失败')
     }
   } catch (error: any) {
+    if (currentGeneration !== generationId || !props.modelValue) return
     console.error('生成二维码失败:', error)
+    generationFailed.value = true
+    statusText.value = automaticRetry ? '二维码仍不可用，请手动重新生成或导入 Cookie' : '生成二维码失败，请重试'
+    showError(statusText.value)
+  } finally {
+    if (currentGeneration === generationId) isGenerating.value = false
   }
 }
 
-const startPolling = () => {
-  if (!sessionId.value) return
+const startPolling = (currentGeneration: number, currentSessionId: string) => {
+  if (!currentSessionId) return
   stopPolling()
   pollTimer = window.setInterval(async () => {
-    if (!sessionId.value || pollRequestPending) return
+    if (currentGeneration !== generationId || !props.modelValue || pollRequestPending) return
     pollRequestPending = true
     try {
-      const response = await getQRCodeStatus(sessionId.value)
+      const response = await getQRCodeStatus(currentSessionId)
+      if (currentGeneration !== generationId || currentSessionId !== sessionId.value) return
       if (response.code === 0 || response.code === 200) {
         const data = response.data
         status.value = data?.status || 'pending'
@@ -85,6 +120,11 @@ const startPolling = () => {
           case 'expired':
             statusText.value = '二维码已过期'
             stopPolling()
+            if (Date.now() - generatedAt < 30000 && quickExpiryRetries < 1) {
+              quickExpiryRetries++
+              statusText.value = '二维码失效，正在自动换一张...'
+              void generateQR(true)
+            }
             break
           case 'verification_required':
             verificationUrl.value = data.verificationUrl || verificationUrl.value
@@ -162,7 +202,13 @@ const handleLoginSuccess = async () => {
 
 const handleClose = () => {
   stopPolling()
+  generationId++
   emit('update:modelValue', false)
+}
+
+const regenerateQR = () => {
+  quickExpiryRetries = 0
+  void generateQR()
 }
 
 const switchToManual = () => {
@@ -212,7 +258,10 @@ const switchToManual = () => {
 
       <!-- 弹窗底部按钮 -->
       <div class="ios-sheet-footer">
-        <button v-if="status === 'verification_required'" class="ios-sheet-btn ios-sheet-btn--manual" @click="switchToManual">
+        <button v-if="canRegenerate" class="ios-sheet-btn ios-sheet-btn--manual" :disabled="isGenerating" @click="regenerateQR">
+          {{ isGenerating ? '生成中...' : '重新生成二维码' }}
+        </button>
+        <button v-if="status === 'verification_required' || canRegenerate" class="ios-sheet-btn ios-sheet-btn--manual" @click="switchToManual">
           改用 Cookie 导入
         </button>
         <button class="ios-sheet-btn ios-sheet-btn--cancel" @click="handleClose">
@@ -447,11 +496,13 @@ const switchToManual = () => {
   border-top: 0.5px solid rgba(60,60,67,.12);
   background: transparent;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .ios-sheet-btn {
-  width: 100%;
+  flex: 1 1 130px;
+  min-width: 0;
   height: 48px;
   border: none;
   border-radius: 12px;
@@ -529,6 +580,7 @@ const switchToManual = () => {
 
   .ios-sheet-footer {
     padding: 10px 12px;
+    flex-direction: column;
   }
 
   .ios-sheet-btn {
