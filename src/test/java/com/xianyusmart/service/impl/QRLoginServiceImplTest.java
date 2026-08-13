@@ -54,4 +54,23 @@ class QRLoginServiceImplTest {
         assertTrue(!QRLoginServiceImpl.isTerminalSessionStatus("verification_required"));
         assertTrue(QRLoginServiceImpl.isTerminalSessionStatus("success"));
     }
+
+    @Test
+    void keepsWaitingWhenConsumedQrBelongsToVerificationSession() {
+        assertTrue(QRLoginServiceImpl.shouldKeepWaitingAfterQRCodeExpired("verification_required"));
+        assertTrue(!QRLoginServiceImpl.shouldKeepWaitingAfterQRCodeExpired("waiting"));
+        assertTrue(!QRLoginServiceImpl.shouldKeepWaitingAfterQRCodeExpired("scanned"));
+    }
+
+    @Test
+    void verificationWindowCanRestartAfterOriginalQrLifetime() {
+        QRLoginSession session = new QRLoginSession("session-3");
+        session.setCreatedTime(System.currentTimeMillis() - 20 * 60 * 1000L);
+        assertTrue(session.isExpired());
+
+        session.setCreatedTime(System.currentTimeMillis());
+        session.setExpireTime(15 * 60 * 1000L);
+
+        assertTrue(!session.isExpired());
+    }
 }

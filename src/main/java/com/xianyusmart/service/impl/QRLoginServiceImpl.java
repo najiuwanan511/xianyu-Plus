@@ -398,10 +398,7 @@ public class QRLoginServiceImpl implements QRLoginService {
             
             log.info("开始监控二维码状态: {}", sessionId);
             
-            long maxWaitTime = QR_SESSION_MAX_WAIT_MILLIS; // 风控验证可能需要较长时间，最多等待15分钟
-            long startTime = System.currentTimeMillis();
-            
-            while (System.currentTimeMillis() - startTime < maxWaitTime) {
+            while (!session.isExpired()) {
                 try {
                     // 检查会话是否还存在
                     if (!sessions.containsKey(sessionId)) {
@@ -421,10 +418,14 @@ public class QRLoginServiceImpl implements QRLoginService {
                     } else if ("NEW".equals(qrCodeStatus)) {
                         // 二维码未被扫描，继续轮询
                     } else if ("EXPIRED".equals(qrCodeStatus)) {
-                        // 二维码已过期
-                        session.setStatus("expired");
-                        log.info("二维码已过期: {}", sessionId);
-                        break;
+                        if (shouldKeepWaitingAfterQRCodeExpired(session.getStatus())) {
+                            // 风控验证会消费一次性二维码，后续返回 EXPIRED 不代表验证会话失效。
+                            log.debug("二维码已消费，但安全验证仍在进行，继续等待: {}", sessionId);
+                        } else {
+                            session.setStatus("expired");
+                            log.info("二维码已过期: {}", sessionId);
+                            break;
+                        }
                     } else if (isScannedStatus(qrCodeStatus)) {
                         // 二维码已被扫描，等待确认
                         if ("waiting".equals(session.getStatus())) {
@@ -527,8 +528,9 @@ public class QRLoginServiceImpl implements QRLoginService {
                 || !Objects.equals(session.getVerificationUrl(), iframeUrl);
         session.setStatus("verification_required");
         session.setVerificationUrl(iframeUrl);
-        session.setExpireTime(QR_SESSION_MAX_WAIT_MILLIS);
         if (firstNotification) {
+            session.setCreatedTime(System.currentTimeMillis());
+            session.setExpireTime(QR_SESSION_MAX_WAIT_MILLIS);
             log.warn("账号被风控，需要完成安全验证后继续等待登录结果");
             log.warn("   - 会话ID: {}", session.getSessionId());
             log.warn("   - 验证URL: {}", iframeUrl);
@@ -612,6 +614,10 @@ public class QRLoginServiceImpl implements QRLoginService {
                 || "expired".equals(status)
                 || "cancelled".equals(status)
                 || "error".equals(status);
+    }
+
+    static boolean shouldKeepWaitingAfterQRCodeExpired(String sessionStatus) {
+        return "verification_required".equals(sessionStatus);
     }
 
     
