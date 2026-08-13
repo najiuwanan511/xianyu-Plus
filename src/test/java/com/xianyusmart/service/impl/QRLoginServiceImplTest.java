@@ -42,4 +42,16 @@ class QRLoginServiceImplTest {
         assertTrue(QRLoginServiceImpl.isCancelledStatus("CANCELLED"));
         assertTrue(!QRLoginServiceImpl.isCancelledStatus("PROCESSING"));
     }
+
+    @Test
+    void verificationSessionCanBeExtendedForHumanCheck() {
+        QRLoginSession session = new QRLoginSession("session-2");
+
+        session.setExpireTime(900000);
+
+        assertEquals(900000, session.getExpireTime());
+        assertTrue(!session.isExpired());
+        assertTrue(!QRLoginServiceImpl.isTerminalSessionStatus("verification_required"));
+        assertTrue(QRLoginServiceImpl.isTerminalSessionStatus("success"));
+    }
 }

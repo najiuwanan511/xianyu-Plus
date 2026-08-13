@@ -160,7 +160,7 @@ void loadAccounts();
       @success="loadAccounts"
     />
     <ManualAddDialog v-model="dialogs.manualAdd" @success="loadAccounts" />
-    <QRLoginDialog v-model="dialogs.qrLogin" @success="loadAccounts" />
+    <QRLoginDialog v-model="dialogs.qrLogin" @success="loadAccounts" @manual="showManualAddDialog" />
     <DeleteConfirmDialog
       v-model="dialogs.deleteConfirm"
       :account-id="deleteAccountId"

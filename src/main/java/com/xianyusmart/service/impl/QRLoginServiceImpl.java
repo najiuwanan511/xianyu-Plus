@@ -55,6 +55,7 @@ public class QRLoginServiceImpl implements QRLoginService {
     private static final String API_GENERATE_QR = HOST + "/newlogin/qrcode/generate.do";
     private static final String API_SCAN_STATUS = HOST + "/newlogin/qrcode/query.do";
     private static final String API_H5_TK = "https://h5api.m.goofish.com/h5/mtop.gaia.nodejs.gaia.idle.data.gw.v2.index.get/1.0/";
+    private static final long QR_SESSION_MAX_WAIT_MILLIS = 900000L;
     
     public QRLoginServiceImpl() {
         this.httpClient = new OkHttpClient.Builder()
@@ -397,7 +398,7 @@ public class QRLoginServiceImpl implements QRLoginService {
             
             log.info("开始监控二维码状态: {}", sessionId);
             
-            long maxWaitTime = 300000; // 5分钟
+            long maxWaitTime = QR_SESSION_MAX_WAIT_MILLIS; // 风控验证可能需要较长时间，最多等待15分钟
             long startTime = System.currentTimeMillis();
             
             while (System.currentTimeMillis() - startTime < maxWaitTime) {
@@ -410,10 +411,13 @@ public class QRLoginServiceImpl implements QRLoginService {
                     // 轮询二维码状态
                     String qrCodeStatus = pollQRCodeStatus(session);
                     
-                    if ("CONFIRMED".equals(qrCodeStatus)) {
+                    if ("CONFIRMED".equals(qrCodeStatus) && "success".equals(session.getStatus())) {
                         // 登录确认
                         log.info("扫码登录成功: {}, UNB: {}", sessionId, session.getUnb());
                         break;
+                    } else if ("VERIFICATION_REQUIRED".equals(qrCodeStatus)) {
+                        // 人脸或安全验证是登录中间态，验证完成后平台会更新同一会话。
+                        // 保持轮询，不能在这里结束监控。
                     } else if ("NEW".equals(qrCodeStatus)) {
                         // 二维码未被扫描，继续轮询
                     } else if ("EXPIRED".equals(qrCodeStatus)) {
@@ -447,7 +451,7 @@ public class QRLoginServiceImpl implements QRLoginService {
             }
             
             // 超时处理
-            if (session != null && !Arrays.asList("success", "expired", "cancelled", "verification_required").contains(session.getStatus())) {
+            if (session != null && !isTerminalSessionStatus(session.getStatus())) {
                 session.setStatus("expired");
                 log.info("二维码监控超时，标记为过期: {}", sessionId);
             }
@@ -500,13 +504,10 @@ public class QRLoginServiceImpl implements QRLoginService {
                         if ("CONFIRMED".equals(qrCodeStatus)) {
                             // 检查是否需要风控验证
                             if (data.has("iframeRedirect") && data.get("iframeRedirect").getAsBoolean()) {
-                                session.setStatus("verification_required");
                                 String iframeUrl = data.has("iframeRedirectUrl") && !data.get("iframeRedirectUrl").isJsonNull()
                                         ? data.get("iframeRedirectUrl").getAsString() : null;
-                                session.setVerificationUrl(iframeUrl);
-                                log.warn("⚠️ 账号被风控，需要手机验证");
-                                log.warn("   - 会话ID: {}", session.getSessionId());
-                                log.warn("   - 验证URL: {}", iframeUrl);
+                                markVerificationRequired(session, iframeUrl);
+                                return "VERIFICATION_REQUIRED";
                             } else {
                                 completeLogin(session);
                             }
@@ -519,6 +520,19 @@ public class QRLoginServiceImpl implements QRLoginService {
         }
         
         return "NEW";
+    }
+
+    private void markVerificationRequired(QRLoginSession session, String iframeUrl) {
+        boolean firstNotification = !"verification_required".equals(session.getStatus())
+                || !Objects.equals(session.getVerificationUrl(), iframeUrl);
+        session.setStatus("verification_required");
+        session.setVerificationUrl(iframeUrl);
+        session.setExpireTime(QR_SESSION_MAX_WAIT_MILLIS);
+        if (firstNotification) {
+            log.warn("账号被风控，需要完成安全验证后继续等待登录结果");
+            log.warn("   - 会话ID: {}", session.getSessionId());
+            log.warn("   - 验证URL: {}", iframeUrl);
+        }
     }
 
     private void completeLogin(QRLoginSession session) {
@@ -593,6 +607,13 @@ public class QRLoginServiceImpl implements QRLoginService {
         return "CANCELED".equals(status) || "CANCELLED".equals(status) || "DENIED".equals(status);
     }
 
+    static boolean isTerminalSessionStatus(String status) {
+        return "success".equals(status)
+                || "expired".equals(status)
+                || "cancelled".equals(status)
+                || "error".equals(status);
+    }
+
     
     @Override
     public QRStatusResponse getSessionStatus(String sessionId) {
@@ -637,7 +658,7 @@ public class QRLoginServiceImpl implements QRLoginService {
                 response.setMessage("用户取消登录");
                 break;
             case "verification_required":
-                response.setMessage("账号被风控，需要手机验证");
+                response.setMessage("请完成安全验证，系统正在继续等待登录结果");
                 if (session.getVerificationUrl() != null) {
                     response.setVerificationUrl(session.getVerificationUrl());
                 }

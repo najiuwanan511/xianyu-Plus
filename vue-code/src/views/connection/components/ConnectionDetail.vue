@@ -413,6 +413,7 @@ onBeforeUnmount(() => {
       v-model="showQRUpdateDialog"
       :account-id="accountId || 0"
       @success="handleQRUpdateSuccess"
+      @manual-update="showManualUpdateCookieDialog = true"
     />
   </div>
 </template>

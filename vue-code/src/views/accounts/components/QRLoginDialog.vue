@@ -12,6 +12,7 @@ interface Props {
 interface Emits {
   (e: 'update:modelValue', value: boolean): void
   (e: 'success'): void
+  (e: 'manual'): void
 }
 
 const props = defineProps<Props>()
@@ -26,6 +27,7 @@ const qrCodeUrl = ref('')
 const sessionId = ref('')
 const status = ref<QRLoginSession['status']>('pending')
 const statusText = ref('正在生成二维码...')
+const verificationUrl = ref('')
 let pollTimer: number | null = null
 let pollRequestPending = false
 
@@ -42,6 +44,7 @@ watch(() => props.modelValue, (newVal) => {
 
 const generateQR = async () => {
   try {
+    verificationUrl.value = ''
     const response = await generateQRCode()
     if (response.code === 0 || response.code === 200) {
       qrCodeUrl.value = response.data?.qrCodeUrl || ''
@@ -84,8 +87,8 @@ const startPolling = () => {
             stopPolling()
             break
           case 'verification_required':
-            statusText.value = data.message || '账号需要安全验证，请在手机端完成后重新扫码'
-            stopPolling()
+            verificationUrl.value = data.verificationUrl || verificationUrl.value
+            statusText.value = data.message || '请完成安全验证，系统正在继续等待登录结果'
             break
           case 'cancelled':
           case 'error':
@@ -161,6 +164,11 @@ const handleClose = () => {
   stopPolling()
   emit('update:modelValue', false)
 }
+
+const switchToManual = () => {
+  handleClose()
+  emit('manual')
+}
 </script>
 
 <template>
@@ -195,12 +203,18 @@ const handleClose = () => {
             {{ statusText }}
           </div>
         </div>
+
+        <a v-if="verificationUrl" class="verification-link" :href="verificationUrl" target="_blank" rel="noopener noreferrer">打开安全验证页面</a>
+        <p v-if="verificationUrl" class="verification-tip">完成后保留此窗口。验证页与服务器会话可能不互通；若页面空白或 1 分钟内无结果，请改用 Cookie 导入。</p>
         
         <p v-if="sessionId" class="session-id">会话ID: {{ sessionId }}</p>
       </div>
 
       <!-- 弹窗底部按钮 -->
       <div class="ios-sheet-footer">
+        <button v-if="status === 'verification_required'" class="ios-sheet-btn ios-sheet-btn--manual" @click="switchToManual">
+          改用 Cookie 导入
+        </button>
         <button class="ios-sheet-btn ios-sheet-btn--cancel" @click="handleClose">
           取消
         </button>
@@ -374,6 +388,27 @@ const handleClose = () => {
   margin: 12px 0;
 }
 
+.verification-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid rgba(0, 122, 255, 0.24);
+  border-radius: 6px;
+  color: #007aff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.verification-tip {
+  margin: 8px 0 0;
+  color: rgba(28, 28, 30, 0.58);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .status-badge {
   padding: 8px 16px;
   border-radius: 20px;
@@ -411,6 +446,8 @@ const handleClose = () => {
   padding: 12px 16px;
   border-top: 0.5px solid rgba(60,60,67,.12);
   background: transparent;
+  display: flex;
+  gap: 8px;
 }
 
 .ios-sheet-btn {
@@ -423,6 +460,11 @@ const handleClose = () => {
   cursor: pointer;
   transition: all 0.2s;
   -webkit-tap-highlight-color: transparent;
+}
+
+.ios-sheet-btn--manual {
+  color: #007aff;
+  border-color: rgba(0, 122, 255, 0.28);
 }
 
 .ios-sheet-btn--cancel {

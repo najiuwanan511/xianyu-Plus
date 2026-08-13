@@ -13,6 +13,7 @@ interface Props {
 interface Emits {
   (e: 'update:modelValue', value: boolean): void
   (e: 'success'): void
+  (e: 'manual-update'): void
 }
 
 const props = defineProps<Props>()
@@ -22,6 +23,7 @@ const qrCodeUrl = ref('')
 const sessionId = ref('')
 const status = ref<QRLoginSession['status']>('pending')
 const statusText = ref('正在生成二维码...')
+const verificationUrl = ref('')
 let pollTimer: number | null = null
 let pollRequestPending = false
 
@@ -35,6 +37,7 @@ watch(() => props.modelValue, (newVal) => {
 
 const generateQR = async () => {
   try {
+    verificationUrl.value = ''
     const response = await generateQRCode()
     if (response.code === 0 || response.code === 200) {
       qrCodeUrl.value = response.data?.qrCodeUrl || ''
@@ -81,8 +84,8 @@ const startPolling = () => {
             stopPolling()
             break
           case 'verification_required':
-            statusText.value = data.message || '账号需要安全验证，请在手机端完成后重新扫码'
-            stopPolling()
+            verificationUrl.value = data.verificationUrl || verificationUrl.value
+            statusText.value = data.message || '请完成安全验证，系统正在继续等待登录结果'
             break
           case 'cancelled':
           case 'error':
@@ -154,6 +157,11 @@ const handleClose = () => {
   stopPolling()
   emit('update:modelValue', false)
 }
+
+const switchToManualUpdate = () => {
+  handleClose()
+  emit('manual-update')
+}
 </script>
 
 <template>
@@ -174,9 +182,12 @@ const handleClose = () => {
             <div class="qr-status">
               <span class="status-tag" :class="status === 'confirmed' ? 'is-success' : ''">{{ statusText }}</span>
             </div>
+            <a v-if="verificationUrl" class="verification-link" :href="verificationUrl" target="_blank" rel="noopener noreferrer">打开安全验证页面</a>
+            <p v-if="verificationUrl" class="verification-tip">完成后保留此窗口。验证页与服务器会话可能不互通；若页面空白或 1 分钟内无结果，请改用 Cookie 更新。</p>
             <p v-if="sessionId" class="session-id">会话ID: {{ sessionId }}</p>
           </div>
           <div class="modal-footer">
+            <button v-if="status === 'verification_required'" class="btn btn-primary" @click="switchToManualUpdate">改用 Cookie 更新</button>
             <button class="btn btn-secondary" @click="handleClose">取消</button>
           </div>
         </div>
@@ -324,6 +335,26 @@ const handleClose = () => {
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+.verification-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(0, 122, 255, 0.24);
+  border-radius: 6px;
+  color: #007aff;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.verification-tip {
+  margin: 7px 0 0;
+  color: rgba(28, 28, 30, 0.58);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .status-tag {
