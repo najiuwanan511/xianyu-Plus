@@ -84,7 +84,9 @@ export interface Message {
 export interface QRLoginSession {
   sessionId: string
   qrCodeUrl: string
-  status: 'pending' | 'scanned' | 'confirmed' | 'expired'
+  status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'cancelled' | 'verification_required' | 'error' | 'not_found'
+  message?: string
+  verificationUrl?: string
 }
 
 // 自动发货配置

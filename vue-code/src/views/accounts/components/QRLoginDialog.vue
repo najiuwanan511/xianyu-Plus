@@ -27,6 +27,7 @@ const sessionId = ref('')
 const status = ref<QRLoginSession['status']>('pending')
 const statusText = ref('正在生成二维码...')
 let pollTimer: number | null = null
+let pollRequestPending = false
 
 watch(() => props.modelValue, (newVal) => {
   if (newVal) {
@@ -56,8 +57,10 @@ const generateQR = async () => {
 
 const startPolling = () => {
   if (!sessionId.value) return
+  stopPolling()
   pollTimer = window.setInterval(async () => {
-    if (!sessionId.value) return
+    if (!sessionId.value || pollRequestPending) return
+    pollRequestPending = true
     try {
       const response = await getQRCodeStatus(sessionId.value)
       if (response.code === 0 || response.code === 200) {
@@ -73,16 +76,29 @@ const startPolling = () => {
             break
           case 'confirmed':
             statusText.value = '登录成功！正在获取信息...'
+            stopPolling()
             await handleLoginSuccess()
             break
           case 'expired':
             statusText.value = '二维码已过期'
             stopPolling()
             break
+          case 'verification_required':
+            statusText.value = data.message || '账号需要安全验证，请在手机端完成后重新扫码'
+            stopPolling()
+            break
+          case 'cancelled':
+          case 'error':
+          case 'not_found':
+            statusText.value = data.message || '扫码登录未完成，请重新扫码'
+            stopPolling()
+            break
         }
       }
     } catch (error) {
       console.error('检查登录状态失败:', error)
+    } finally {
+      pollRequestPending = false
     }
   }, 2000)
 }
@@ -92,6 +108,7 @@ const stopPolling = () => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  pollRequestPending = false
 }
 
 const handleLoginSuccess = async () => {

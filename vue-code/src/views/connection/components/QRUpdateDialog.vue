@@ -54,6 +54,7 @@ const startPolling = () => {
     showError('会话ID为空，无法查询状态')
     return
   }
+  stopPolling()
   pollTimer = window.setInterval(async () => {
     if (!sessionId.value || pollRequestPending) return
     pollRequestPending = true
@@ -77,6 +78,16 @@ const startPolling = () => {
             break
           case 'expired':
             statusText.value = '二维码已过期'
+            stopPolling()
+            break
+          case 'verification_required':
+            statusText.value = data.message || '账号需要安全验证，请在手机端完成后重新扫码'
+            stopPolling()
+            break
+          case 'cancelled':
+          case 'error':
+          case 'not_found':
+            statusText.value = data.message || '扫码登录未完成，请重新扫码'
             stopPolling()
             break
         }
