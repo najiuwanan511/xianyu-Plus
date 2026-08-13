@@ -84,7 +84,7 @@ export interface Message {
 export interface QRLoginSession {
   success?: boolean
   sessionId: string
-  qrCodeUrl: string
+  qrCodeUrl?: string
   status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'cancelled' | 'verification_required' | 'error' | 'not_found'
   message?: string
   verificationUrl?: string

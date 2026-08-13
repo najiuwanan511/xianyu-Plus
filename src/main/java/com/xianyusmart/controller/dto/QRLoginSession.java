@@ -11,15 +11,17 @@ import java.util.Map;
 public class QRLoginSession {
     
     private String sessionId;
-    private String status; // waiting, scanned, success, expired, cancelled, verification_required
+    private volatile String status; // waiting, scanned, success, expired, cancelled, verification_required
     private String qrCodeUrl;
     private String qrContent;
     private Map<String, String> cookies = new HashMap<>();
-    private String unb;
+    private volatile String unb;
     private long createdTime;
     private long expireTime = 300000; // 5分钟过期（毫秒）
     private Map<String, String> params = new HashMap<>();
     private String verificationUrl;
+    private volatile String verificationQrCodeUrl;
+    private volatile String verificationMessage;
     
     public QRLoginSession(String sessionId) {
         this.sessionId = sessionId;

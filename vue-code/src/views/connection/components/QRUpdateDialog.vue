@@ -27,6 +27,11 @@ const verificationUrl = ref('')
 const isGenerating = ref(false)
 const generationFailed = ref(false)
 const canRegenerate = computed(() => generationFailed.value || ['expired', 'cancelled', 'error', 'not_found'].includes(status.value))
+const showVerificationFallback = computed(() =>
+  status.value === 'verification_required' &&
+  !qrCodeUrl.value &&
+  (statusText.value.includes('失败') || statusText.value.includes('未返回'))
+)
 let pollTimer: number | null = null
 let pollRequestPending = false
 let generationId = 0
@@ -124,7 +129,8 @@ const startPolling = (currentGeneration: number, currentSessionId: string) => {
             break
           case 'verification_required':
             verificationUrl.value = data.verificationUrl || verificationUrl.value
-            statusText.value = data.message || '请完成安全验证，系统正在继续等待登录结果'
+            qrCodeUrl.value = data.qrCodeUrl || ''
+            statusText.value = data.message || '正在准备人脸验证二维码...'
             break
           case 'cancelled':
           case 'error':
@@ -224,12 +230,12 @@ const switchToManualUpdate = () => {
               <img v-if="qrCodeUrl" :src="qrCodeUrl" alt="二维码" class="qr-code" />
               <div v-else class="qr-loading"><div class="loading-spinner"></div></div>
             </div>
-            <p class="qr-tip">请使用闲鱼APP扫描二维码完成更新</p>
+            <p class="qr-tip">{{ status === 'verification_required' ? '请使用闲鱼APP扫描人脸验证二维码' : '请使用闲鱼APP扫描二维码完成更新' }}</p>
             <div class="qr-status">
               <span class="status-tag" :class="status === 'confirmed' ? 'is-success' : ''">{{ statusText }}</span>
             </div>
-            <a v-if="verificationUrl" class="verification-link" :href="verificationUrl" target="_blank" rel="noopener noreferrer">打开安全验证页面</a>
-            <p v-if="verificationUrl" class="verification-tip">完成后保留此窗口。验证页与服务器会话可能不互通；若页面空白或 1 分钟内无结果，请改用 Cookie 更新。</p>
+            <a v-if="verificationUrl && showVerificationFallback" class="verification-link" :href="verificationUrl" target="_blank" rel="noopener noreferrer">打开安全验证页面</a>
+            <p v-if="showVerificationFallback" class="verification-tip">自动人脸验证未能启动，可打开平台验证页面；若完成后仍无结果，请改用 Cookie 更新。</p>
             <p v-if="sessionId" class="session-id">会话ID: {{ sessionId }}</p>
           </div>
           <div class="modal-footer">
@@ -237,7 +243,7 @@ const switchToManualUpdate = () => {
               {{ isGenerating ? '生成中...' : '重新生成二维码' }}
             </button>
             <button v-if="canRegenerate" class="btn btn-secondary" @click="switchToManualUpdate">改用 Cookie 更新</button>
-            <button v-if="status === 'verification_required'" class="btn btn-primary" @click="switchToManualUpdate">改用 Cookie 更新</button>
+            <button v-if="status === 'verification_required'" class="btn btn-secondary" @click="switchToManualUpdate">改用 Cookie 更新</button>
             <button class="btn btn-secondary" @click="handleClose">取消</button>
           </div>
         </div>

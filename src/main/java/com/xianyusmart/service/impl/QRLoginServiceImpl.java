@@ -54,6 +54,7 @@ public class QRLoginServiceImpl implements QRLoginService {
     private static final String API_MINI_LOGIN = HOST + "/mini_login.htm";
     private static final String API_GENERATE_QR = HOST + "/newlogin/qrcode/generate.do";
     private static final String API_SCAN_STATUS = HOST + "/newlogin/qrcode/query.do";
+    private static final String API_FACE_CHECK = HOST + "/iv/photoVerify/check.do";
     private static final String API_H5_TK = "https://h5api.m.goofish.com/h5/mtop.gaia.nodejs.gaia.idle.data.gw.v2.index.get/1.0/";
     private static final long QR_SESSION_MAX_WAIT_MILLIS = 900000L;
     
@@ -413,8 +414,10 @@ public class QRLoginServiceImpl implements QRLoginService {
                         log.info("扫码登录成功: {}, UNB: {}", sessionId, session.getUnb());
                         break;
                     } else if ("VERIFICATION_REQUIRED".equals(qrCodeStatus)) {
-                        // 人脸或安全验证是登录中间态，验证完成后平台会更新同一会话。
-                        // 保持轮询，不能在这里结束监控。
+                        if (completeFaceVerification(session)) {
+                            log.info("人脸验证登录成功: {}, UNB: {}", sessionId, session.getUnb());
+                        }
+                        return;
                     } else if ("NEW".equals(qrCodeStatus)) {
                         // 二维码未被扫描，继续轮询
                     } else if ("EXPIRED".equals(qrCodeStatus)) {
@@ -526,16 +529,212 @@ public class QRLoginServiceImpl implements QRLoginService {
     private void markVerificationRequired(QRLoginSession session, String iframeUrl) {
         boolean firstNotification = !"verification_required".equals(session.getStatus())
                 || !Objects.equals(session.getVerificationUrl(), iframeUrl);
-        session.setStatus("verification_required");
         session.setVerificationUrl(iframeUrl);
         if (firstNotification) {
             session.setCreatedTime(System.currentTimeMillis());
             session.setExpireTime(QR_SESSION_MAX_WAIT_MILLIS);
-            log.warn("账号被风控，需要完成安全验证后继续等待登录结果");
+            session.setVerificationQrCodeUrl(null);
+            session.setVerificationMessage("正在准备人脸验证二维码...");
+            log.warn("账号被风控，开始准备人脸验证二维码");
             log.warn("   - 会话ID: {}", session.getSessionId());
-            log.warn("   - 验证URL: {}", iframeUrl);
+            log.warn("   - 已获取平台安全验证地址");
+        }
+        // Volatile 状态最后发布，确保状态查询线程先看到完整的验证上下文。
+        session.setStatus("verification_required");
+    }
+
+    private boolean completeFaceVerification(QRLoginSession session) {
+        String iframeUrl = session.getVerificationUrl();
+        if (iframeUrl == null || iframeUrl.isBlank()) {
+            session.setVerificationMessage("平台未返回安全验证地址，请改用 Cookie 更新");
+            return false;
+        }
+
+        try {
+            FollowedResponse normalPage = followVerificationRedirects(session, iframeUrl, generateHeaders(), 8);
+            String htoken = extractFaceToken(normalPage.body(), normalPage.url().toString());
+            String verifyModesUrl = extractVerificationModesUrl(normalPage.body(), normalPage.url());
+            if (htoken == null || verifyModesUrl == null) {
+                throw new IOException("未能从安全验证页面提取验证参数");
+            }
+
+            FollowedResponse identityPage = followVerificationRedirects(session, verifyModesUrl, generateHeaders(), 8);
+            String faceQrContent = extractFaceQRCodeContent(identityPage.body());
+            if (faceQrContent == null) {
+                throw new IOException("未能从安全验证页面提取人脸二维码");
+            }
+
+            session.setVerificationQrCodeUrl(generateQRCodeImage(faceQrContent));
+            session.setVerificationMessage("请使用闲鱼扫描人脸验证二维码，完成后系统会自动继续登录");
+            log.info("人脸验证二维码已生成: {}", session.getSessionId());
+
+            Headers faceHeaders = generateFaceVerificationHeaders(identityPage.url());
+            String completionUrl = waitForFaceVerification(session, htoken, identityPage.url(), faceHeaders);
+            if (completionUrl == null) {
+                if (sessions.containsKey(session.getSessionId()) && session.isExpired()) {
+                    session.setStatus("expired");
+                    session.setVerificationMessage("人脸验证已超时，请重新生成二维码");
+                }
+                return false;
+            }
+
+            session.setVerificationMessage("人脸验证已通过，正在完成登录...");
+            followVerificationRedirects(session, completionUrl, faceHeaders, 10);
+            if (!hasAuthenticatedAccount(session)) {
+                throw new IOException("人脸验证已通过，但未获得账号登录信息");
+            }
+            completeLogin(session);
+            return "success".equals(session.getStatus());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("人脸验证登录处理被中断: sessionId={}", session.getSessionId());
+            return false;
+        } catch (Exception e) {
+            log.error("人脸验证登录处理失败: sessionId={}", session.getSessionId(), e);
+            if (sessions.containsKey(session.getSessionId())) {
+                session.setVerificationMessage("自动完成人脸验证失败，请打开安全验证页面或改用 Cookie 更新");
+            }
+            return false;
         }
     }
+
+    private String waitForFaceVerification(QRLoginSession session, String htoken, HttpUrl identityUrl,
+                                           Headers headers)
+            throws IOException, InterruptedException {
+        HttpUrl checkUrl = Objects.requireNonNull(HttpUrl.parse(API_FACE_CHECK)).newBuilder()
+                .addQueryParameter("htoken", htoken)
+                .build();
+        while (!session.isExpired() && sessions.containsKey(session.getSessionId())) {
+            Request request = new Request.Builder()
+                    .url(checkUrl)
+                    .headers(headers)
+                    .header("Cookie", CookieUtils.formatCookies(session.getCookies()))
+                    .get()
+                    .build();
+            try (Response response = qrStatusClient.newCall(request).execute()) {
+                mergeResponseCookies(session, response);
+                if (response.isSuccessful() && response.body() != null) {
+                    FaceCheckResult result = readFaceCheckResult(gson.fromJson(response.body().string(), JsonObject.class));
+                    if ("3".equals(result.code()) && result.completionUrl() != null) {
+                        String completionUrl = parseTrustedVerificationUrl(
+                                result.completionUrl(), identityUrl).toString();
+                        log.info("人脸验证已通过: {}", session.getSessionId());
+                        return completionUrl;
+                    }
+                    if (!"0".equals(result.code()) && !result.code().isBlank()) {
+                        log.warn("人脸验证返回中间状态: sessionId={}, code={}",
+                                session.getSessionId(), result.code());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("人脸验证状态查询失败，将继续重试: sessionId={}, error={}",
+                        session.getSessionId(), e.getMessage());
+            }
+            Thread.sleep(2000);
+        }
+        return null;
+    }
+
+    private Headers generateFaceVerificationHeaders(HttpUrl identityUrl) {
+        return generateApiHeaders().newBuilder()
+                .set("Accept", "application/json, text/javascript, */*; q=0.01")
+                .set("X-Requested-With", "XMLHttpRequest")
+                .set("Referer", identityUrl.toString())
+                .build();
+    }
+
+    FollowedResponse followVerificationRedirects(QRLoginSession session, String rawUrl, Headers headers,
+                                                   int maxRedirects) throws IOException {
+        HttpUrl currentUrl = parseTrustedVerificationUrl(rawUrl, null);
+        for (int redirect = 0; redirect <= maxRedirects; redirect++) {
+            Request request = new Request.Builder()
+                    .url(currentUrl)
+                    .headers(headers)
+                    .header("Cookie", CookieUtils.formatCookies(session.getCookies()))
+                    .get()
+                    .build();
+            try (Response response = qrStatusClient.newCall(request).execute()) {
+                mergeResponseCookies(session, response);
+                if (response.isRedirect()) {
+                    String location = response.header("Location");
+                    if (location == null || location.isBlank()) {
+                        throw new IOException("安全验证跳转缺少 Location");
+                    }
+                    currentUrl = parseTrustedVerificationUrl(location, currentUrl);
+                    continue;
+                }
+                String body = response.body() == null ? "" : response.body().string();
+                if (!response.isSuccessful()) {
+                    throw new IOException("安全验证页面请求失败，HTTP " + response.code());
+                }
+                return new FollowedResponse(currentUrl, body, response.code());
+            }
+        }
+        throw new IOException("安全验证页面跳转次数过多");
+    }
+
+    private static HttpUrl parseTrustedVerificationUrl(String rawUrl, HttpUrl baseUrl) throws IOException {
+        HttpUrl url = baseUrl == null ? HttpUrl.parse(rawUrl) : baseUrl.resolve(rawUrl);
+        if (url == null || !"https".equalsIgnoreCase(url.scheme()) || !isTrustedVerificationHost(url.host())) {
+            throw new IOException("安全验证返回了不受信任的跳转地址");
+        }
+        return url;
+    }
+
+    static boolean isTrustedVerificationHost(String host) {
+        String normalized = host == null ? "" : host.toLowerCase(Locale.ROOT);
+        return normalized.equals("goofish.com") || normalized.endsWith(".goofish.com")
+                || normalized.equals("taobao.com") || normalized.endsWith(".taobao.com");
+    }
+
+    static String extractFaceToken(String html, String fallbackUrl) {
+        Matcher matcher = Pattern.compile("htoken=([A-Za-z0-9_-]+)").matcher(
+                String.valueOf(html) + " " + String.valueOf(fallbackUrl));
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    static String extractVerificationModesUrl(String html, HttpUrl baseUrl) {
+        if (html == null || baseUrl == null) return null;
+        Matcher matcher = Pattern.compile(
+                "[\\\"']((?:https://[^\\\"']+)?/iv/mini/verify_modes\\.htm\\?[^\\\"']*)[\\\"']")
+                .matcher(decodePageValue(html));
+        if (!matcher.find()) return null;
+        String rawUrl = decodePageValue(matcher.group(1));
+        if (rawUrl.endsWith("_umidfg=")) rawUrl += "1";
+        HttpUrl resolved = baseUrl.resolve(rawUrl);
+        return resolved == null ? null : resolved.toString();
+    }
+
+    static String extractFaceQRCodeContent(String html) {
+        if (html == null) return null;
+        Matcher matcher = Pattern.compile(
+                "new\\s+Qrcode\\s*\\(\\s*\\{\\s*text\\s*:\\s*[\\\"']([^\\\"']+)[\\\"']",
+                Pattern.CASE_INSENSITIVE).matcher(html);
+        return matcher.find() ? decodePageValue(matcher.group(1)) : null;
+    }
+
+    private static String decodePageValue(String value) {
+        return value.replace("&amp;", "&")
+                .replace("&#38;", "&")
+                .replace("\\u0026", "&")
+                .replace("\\/", "/");
+    }
+
+    static FaceCheckResult readFaceCheckResult(JsonObject response) {
+        if (response == null || !response.has("content") || !response.get("content").isJsonObject()) {
+            return new FaceCheckResult("", null);
+        }
+        JsonObject content = response.getAsJsonObject("content");
+        String code = content.has("code") && !content.get("code").isJsonNull()
+                ? content.get("code").getAsString() : "";
+        String url = content.has("url") && !content.get("url").isJsonNull()
+                ? content.get("url").getAsString() : null;
+        return new FaceCheckResult(code, url);
+    }
+
+    record FollowedResponse(HttpUrl url, String body, int code) {}
+
+    record FaceCheckResult(String code, String completionUrl) {}
 
     private void completeLogin(QRLoginSession session) {
         log.info("扫码确认成功，开始保存账号信息: sessionId={}", session.getSessionId());
@@ -664,7 +863,9 @@ public class QRLoginServiceImpl implements QRLoginService {
                 response.setMessage("用户取消登录");
                 break;
             case "verification_required":
-                response.setMessage("请完成安全验证，系统正在继续等待登录结果");
+                response.setMessage(session.getVerificationMessage() == null
+                        ? "正在准备人脸验证二维码..." : session.getVerificationMessage());
+                response.setQrCodeUrl(session.getVerificationQrCodeUrl());
                 if (session.getVerificationUrl() != null) {
                     response.setVerificationUrl(session.getVerificationUrl());
                 }
@@ -713,7 +914,7 @@ public class QRLoginServiceImpl implements QRLoginService {
         }
         return null;
     }
-    
+
     @Override
     public void cleanupExpiredSessions() {
         List<String> expiredSessions = new ArrayList<>();

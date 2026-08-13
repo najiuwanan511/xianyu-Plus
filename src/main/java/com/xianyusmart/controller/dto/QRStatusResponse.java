@@ -13,5 +13,6 @@ public class QRStatusResponse {
     private String cookies;
     private String unb;
     private String verificationUrl;
+    private String qrCodeUrl;
     private String message;
 }
