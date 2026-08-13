@@ -249,6 +249,9 @@ const switchToManual = () => {
         </div>
         
         <p class="qr-tip">{{ status === 'verification_required' ? '请使用闲鱼APP扫描人脸验证二维码' : '请使用闲鱼APP扫描二维码登录' }}</p>
+        <p v-if="status === 'verification_required' && qrCodeUrl" class="face-scan-warning">
+          注意：这是第二次扫码！请再次使用闲鱼APP扫描上方二维码，并完成人脸识别。
+        </p>
         
         <div class="qr-status">
           <div class="status-badge" :class="`status-${status}`">
@@ -461,6 +464,15 @@ const switchToManual = () => {
   color: rgba(28, 28, 30, 0.58);
   font-size: 12px;
   line-height: 1.5;
+  text-align: center;
+}
+
+.face-scan-warning {
+  margin: 0 0 12px;
+  color: #d70015;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
   text-align: center;
 }
 

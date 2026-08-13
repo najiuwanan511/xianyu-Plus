@@ -497,6 +497,16 @@ public class SystemUpdateService {
     private void applyBundledReleaseNotes(SystemUpdateStatusRespDTO status) {
         if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) return;
         String version = normalizeVersion(status.getLatestVersion());
+        if ("2.3.0".equals(version)) {
+            status.setUpdateHighlights(List.of(
+                    "每个正常账号随机每5至8小时自动执行一次完整连接修复",
+                    "多账号进入全局错峰队列，任意两个账号至少间隔1小时",
+                    "完整修复依次刷新H5 Token和WebSocket Token，再断开旧连接并重连",
+                    "禁用账号或等待安全验证的账号自动跳过，避免重复触发风控",
+                    "扫码登录与凭证更新的人脸二维码增加红色第二次扫码提示"
+            ));
+            return;
+        }
         if ("2.2.8".equals(version)) {
             status.setUpdateHighlights(List.of(
                     "商品配置始终显示多规格发货区域，并提供单商品重新同步规格入口",

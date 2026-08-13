@@ -21,6 +21,11 @@ app:
     startup-reconnect-delay-ms: ${WEBSOCKET_STARTUP_RECONNECT_DELAY_MS:10000}
     startup-reconnect-attempts: ${WEBSOCKET_STARTUP_RECONNECT_ATTEMPTS:8}
     startup-reconnect-interval-ms: ${WEBSOCKET_STARTUP_RECONNECT_INTERVAL_MS:30000}
+    automatic-repair:
+      enabled: ${WEBSOCKET_AUTOMATIC_REPAIR_ENABLED:true}
+      min-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MIN_HOURS:5}
+      max-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MAX_HOURS:8}
+      account-spacing-minutes: ${WEBSOCKET_AUTOMATIC_REPAIR_ACCOUNT_SPACING_MINUTES:60}
   item-polish:
     scan-delay-ms: ${ITEM_POLISH_SCAN_DELAY_MS:30000}
     initial-delay-ms: ${ITEM_POLISH_INITIAL_DELAY_MS:90000}

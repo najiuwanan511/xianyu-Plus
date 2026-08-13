@@ -231,6 +231,9 @@ const switchToManualUpdate = () => {
               <div v-else class="qr-loading"><div class="loading-spinner"></div></div>
             </div>
             <p class="qr-tip">{{ status === 'verification_required' ? '请使用闲鱼APP扫描人脸验证二维码' : '请使用闲鱼APP扫描二维码完成更新' }}</p>
+            <p v-if="status === 'verification_required' && qrCodeUrl" class="face-scan-warning">
+              注意：这是第二次扫码！请再次使用闲鱼APP扫描上方二维码，并完成人脸识别。
+            </p>
             <div class="qr-status">
               <span class="status-tag" :class="status === 'confirmed' ? 'is-success' : ''">{{ statusText }}</span>
             </div>
@@ -414,6 +417,15 @@ const switchToManualUpdate = () => {
   color: rgba(28, 28, 30, 0.58);
   font-size: 11px;
   line-height: 1.5;
+}
+
+.face-scan-warning {
+  margin: 0 0 10px;
+  color: #d70015;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
+  text-align: center;
 }
 
 .status-tag {
