@@ -62,6 +62,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
     public static final String PARTIAL_DELIVERY_REVIEW_PREFIX = "PARTIAL_DELIVERY_REVIEW: ";
     public static final String BUYER_VERIFICATION_PENDING_PREFIX = "BUYER_VERIFICATION_PENDING: ";
     private static final long IMAGE_TO_TEXT_DELAY_MS = 1500L;
+    private static final long TEXT_TO_TEXT_DELAY_MS = 1000L;
     private final Set<String> activeManualRedeliveries = ConcurrentHashMap.newKeySet();
     
     @Autowired
@@ -531,6 +532,9 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             List<String> messages = messageTemplateRenderer.splitMessages(content);
             int sentCount = 0;
             for (String message : messages) {
+                if (sentCount > 0) {
+                    pauseBetweenDeliveryTexts(false);
+                }
                 String messageBlacklistReason = blacklistService.blockedMessage(accountId, verifiedBuyerId);
                 if (messageBlacklistReason != null || !webSocketService.sendMessage(accountId, cid, toId, message)) {
                     if (cardDelivery) {
@@ -792,6 +796,8 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                         HumanLikeDelayUtils.mediumDelay();
                         HumanLikeDelayUtils.thinkingDelay();
                         HumanLikeDelayUtils.typingDelay(message.length());
+                    } else if (sentInThisDelivery > 0) {
+                        pauseBetweenDeliveryTexts(false);
                     }
 
                     cardDeliveryAttempted = cardDelivery;
@@ -973,6 +979,19 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("图片与卡密消息之间的发送间隔被中断", e);
+        }
+    }
+
+    /** Keep explicitly separated text messages distinct on the buyer's chat timeline. */
+    private void pauseBetweenDeliveryTexts(boolean needHumanLikeDelay) {
+        if (needHumanLikeDelay) {
+            return;
+        }
+        try {
+            Thread.sleep(TEXT_TO_TEXT_DELAY_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("分段发货消息之间的发送间隔被中断", e);
         }
     }
 

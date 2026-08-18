@@ -497,6 +497,14 @@ public class SystemUpdateService {
     private void applyBundledReleaseNotes(SystemUpdateStatusRespDTO status) {
         if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) return;
         String version = normalizeVersion(status.getLatestVersion());
+        if ("2.3.5".equals(version)) {
+            status.setUpdateHighlights(List.of(
+                    "重构卡券库发货流程，图片配置提升到流程第一步并提供实时预览",
+                    "支持图片、卡密和联系方式按顺序独立发送，分段文字之间增加发送间隔",
+                    "新增一键添加下一条消息，继续兼容旧模板、###### 和 {kmKey}"
+            ));
+            return;
+        }
         if ("2.3.4".equals(version)) {
             status.setUpdateHighlights(List.of(
                     "修复图片已经送达但未返回回执时，卡密文字被提前中止的问题",

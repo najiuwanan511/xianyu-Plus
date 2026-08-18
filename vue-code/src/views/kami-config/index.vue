@@ -85,6 +85,19 @@ const deliveryTemplateVariables = [
   { token: '{seller_name}', name: '卖家名称', description: '当前发货账号的备注；未设置时显示账号 UNB' },
   { token: '{sku_name}', name: '商品规格', description: '买家下单时选择的规格；无规格时为空' }
 ]
+const DELIVERY_MESSAGE_SEPARATOR = '######'
+
+const deliveryTemplateMessages = computed(() => {
+  const template = apiForm.value.deliveryTemplate.trim()
+  if (!template) return ['{DELIVERY_CONTENT}']
+  return template
+    .split(DELIVERY_MESSAGE_SEPARATOR)
+    .map(message => message.trim())
+})
+
+const deliveryMessageLabel = (index: number) => index === 0
+  ? '文字消息 1（卡密/发货内容）'
+  : `文字消息 ${index + 1}`
 
 const accountDisplayName = (account?: Account) =>
   account?.accountNote || account?.unb || (account ? `账号 #${account.id}` : '未知账号')
@@ -133,6 +146,16 @@ const insertDeliveryTemplateVariable = async (token: string) => {
   const cursor = start + token.length
   deliveryTemplateTextarea.value?.focus()
   deliveryTemplateTextarea.value?.setSelectionRange(cursor, cursor)
+}
+
+const addDeliveryMessage = async () => {
+  const currentValue = apiForm.value.deliveryTemplate.trim()
+  const baseTemplate = currentValue || '{DELIVERY_CONTENT}'
+  apiForm.value.deliveryTemplate = `${baseTemplate}\n${DELIVERY_MESSAGE_SEPARATOR}\n`
+  await nextTick()
+  const textarea = deliveryTemplateTextarea.value
+  textarea?.focus()
+  textarea?.setSelectionRange(apiForm.value.deliveryTemplate.length, apiForm.value.deliveryTemplate.length)
 }
 
 const showRelatedGoodsDialog = ref(false)
@@ -1295,22 +1318,96 @@ onUnmounted(() => {
                 </div>
               </template>
 
-              <div class="api-config-form__template">
-                <div class="form-row">
-                  <label class="form-label">发货消息模板</label>
+              <section class="api-config-form__template delivery-flow">
+                <div class="delivery-flow__heading">
+                  <div>
+                    <strong>发货流程</strong>
+                    <span>图片先发送，随后按顺序发送每条文字消息</span>
+                  </div>
+                  <span class="delivery-flow__count">{{ deliveryTemplateMessages.length + ((apiForm.deliveryImageUrl || configuredDeliveryImages.length) ? 1 : 0) }} 条内容</span>
+                </div>
+                <div class="delivery-flow__preview">
+                  <div class="delivery-flow__preview-item" :class="{ 'is-disabled': !apiForm.deliveryImageUrl && !configuredDeliveryImages.length }">
+                    <b>1</b><span>图片</span><em>{{ apiForm.deliveryImageUrl || configuredDeliveryImages.length ? '已配置' : '可选' }}</em>
+                  </div>
+                  <div v-for="(_, index) in deliveryTemplateMessages" :key="index" class="delivery-flow__preview-item">
+                    <b>{{ index + 2 }}</b><span>{{ index === 0 ? '卡密/发货内容' : `文字消息 ${index + 1}` }}</span><em>单独发送</em>
+                  </div>
+                </div>
+
+                <div class="delivery-message-step">
+                  <div class="delivery-message-step__head">
+                    <span class="delivery-message-step__number">1</span>
+                    <div><strong>发货图片（可选）</strong><small>图片会作为第一条消息发送</small></div>
+                  </div>
+                  <div class="delivery-image-control">
+                    <input ref="deliveryImageInput" type="file" accept="image/*" class="delivery-image-control__input" @change="uploadDeliveryImage" />
+                    <div class="delivery-image-account-picker">
+                      <div class="delivery-image-account-picker__head">
+                        <strong>选择上传账号</strong>
+                        <button type="button" class="btn btn-text btn-sm" :disabled="deliveryImageUploading || uploadCapableAccounts.length === 0" @click="toggleAllUploadAccounts">
+                          {{ allUploadAccountsSelected ? '取消全选' : '全选可用账号' }}
+                        </button>
+                      </div>
+                      <div v-if="uploadAccounts.length" class="delivery-image-account-picker__list">
+                        <label v-for="account in uploadAccounts" :key="account.id" class="delivery-image-account-option" :class="{ 'is-disabled': account.status !== 1 }">
+                          <input v-model="deliveryImageUploadAccountIds" type="checkbox" :value="account.id" :disabled="deliveryImageUploading || account.status !== 1" />
+                          <span>{{ accountDisplayName(account) }}</span>
+                          <em>{{ account.status === 1 ? '可用' : '不可用' }}</em>
+                        </label>
+                      </div>
+                      <span v-else class="delivery-image-account-picker__empty">暂无可用账号</span>
+                    </div>
+                    <div class="delivery-image-control__actions">
+                      <button type="button" class="btn btn-secondary btn-sm" :disabled="deliveryImageUploading || deliveryImageUploadAccountIds.length === 0" @click="chooseDeliveryImage">
+                        {{ deliveryImageUploading ? `上传中 ${deliveryImageUploadProgress.completed}/${deliveryImageUploadProgress.total}` : `上传到 ${deliveryImageUploadAccountIds.length} 个账号` }}
+                      </button>
+                      <button v-if="apiForm.deliveryImageUrl || configuredDeliveryImages.length" type="button" class="btn btn-danger btn-sm" :disabled="deliveryImageUploading" @click="clearAllDeliveryImages">清空全部</button>
+                    </div>
+                    <div v-if="apiForm.deliveryImageUrl" class="delivery-image-item delivery-image-item--legacy">
+                      <img :src="apiForm.deliveryImageUrl" class="delivery-image-control__preview" alt="旧版自动发货图片预览" />
+                      <span><strong>旧版共享图片</strong><small>所有未单独配置的账号继续使用</small></span>
+                      <button type="button" class="btn btn-danger btn-text btn-sm" :disabled="deliveryImageUploading" @click="apiForm.deliveryImageUrl = ''">移除</button>
+                    </div>
+                    <div v-if="configuredDeliveryImages.length" class="delivery-image-list">
+                      <div v-for="item in configuredDeliveryImages" :key="item.accountId" class="delivery-image-item">
+                        <img :src="item.imageUrl" class="delivery-image-control__preview" :alt="`${item.accountName}发货图片预览`" />
+                        <span><strong>{{ item.accountName }}</strong><small>账号 #{{ item.accountId }}</small></span>
+                        <button type="button" class="btn btn-danger btn-text btn-sm" :disabled="deliveryImageUploading" @click="removeAccountDeliveryImage(item.accountId)">移除</button>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="delivery-message-step__hint">按成交账号使用对应图片；商品单独配置的图片优先。</p>
+                </div>
+
+                <div class="delivery-message-step">
+                  <div class="delivery-message-step__head">
+                    <span class="delivery-message-step__number">2</span>
+                    <div><strong>文字消息</strong><small>卡密和联系方式可以拆成不同消息</small></div>
+                  </div>
                   <textarea
                     ref="deliveryTemplateTextarea"
                     v-model="apiForm.deliveryTemplate"
-                    class="form-textarea"
+                    class="form-textarea delivery-message-step__textarea"
                     :rows="7"
                     maxlength="2000"
-                    placeholder="您好，您购买的商品已发货：&#10;&#10;{DELIVERY_CONTENT}&#10;&#10;订单号：{order_id}"
+                    placeholder="卡密：&#10;{DELIVERY_CONTENT}&#10;######&#10;联系方式："
                   ></textarea>
-                  <p v-pre class="form-hint">留空时直接发送卡券内容。填写模板时必须包含 {DELIVERY_CONTENT}。</p>
+                  <div class="delivery-message-step__actions">
+                    <button type="button" class="btn btn-secondary btn-sm" @click="addDeliveryMessage">添加下一条文字消息</button>
+                    <span>当前 {{ deliveryTemplateMessages.length }} 条文字消息</span>
+                  </div>
+                  <div class="delivery-message-preview">
+                    <div v-for="(message, index) in deliveryTemplateMessages" :key="index" class="delivery-message-preview__item">
+                      <span>{{ deliveryMessageLabel(index) }}</span>
+                      <p>{{ message || '待填写' }}</p>
+                    </div>
+                  </div>
+                  <p v-pre class="delivery-message-step__hint">留空时直接发送卡券内容；模板必须包含 {DELIVERY_CONTENT}。旧模板中的 {kmKey} 仍然兼容。</p>
                   <div class="delivery-template-guide">
                     <div class="delivery-template-guide__head">
-                      <strong>变量说明</strong>
-                      <span>点击变量即可插入到模板光标位置</span>
+                      <strong>可用变量</strong>
+                      <span>点击变量插入到光标位置</span>
                     </div>
                     <div class="delivery-template-guide__grid">
                       <button
@@ -1330,50 +1427,8 @@ onUnmounted(() => {
                       </button>
                     </div>
                   </div>
-                  <div class="form-row">
-                    <label class="form-label">自动发货图片</label>
-                    <div class="delivery-image-control">
-                      <input ref="deliveryImageInput" type="file" accept="image/*" class="delivery-image-control__input" @change="uploadDeliveryImage" />
-                      <div class="delivery-image-account-picker">
-                        <div class="delivery-image-account-picker__head">
-                          <strong>上传账号</strong>
-                          <button type="button" class="btn btn-text btn-sm" :disabled="deliveryImageUploading || uploadCapableAccounts.length === 0" @click="toggleAllUploadAccounts">
-                            {{ allUploadAccountsSelected ? '取消全选' : '全选可用账号' }}
-                          </button>
-                        </div>
-                        <div v-if="uploadAccounts.length" class="delivery-image-account-picker__list">
-                          <label v-for="account in uploadAccounts" :key="account.id" class="delivery-image-account-option" :class="{ 'is-disabled': account.status !== 1 }">
-                            <input v-model="deliveryImageUploadAccountIds" type="checkbox" :value="account.id" :disabled="deliveryImageUploading || account.status !== 1" />
-                            <span>{{ accountDisplayName(account) }}</span>
-                            <em>{{ account.status === 1 ? '可用' : '不可用' }}</em>
-                          </label>
-                        </div>
-                        <span v-else class="delivery-image-account-picker__empty">暂无可用账号</span>
-                      </div>
-                      <div class="delivery-image-control__actions">
-                        <button type="button" class="btn btn-secondary btn-sm" :disabled="deliveryImageUploading || deliveryImageUploadAccountIds.length === 0" @click="chooseDeliveryImage">
-                          {{ deliveryImageUploading ? `上传中 ${deliveryImageUploadProgress.completed}/${deliveryImageUploadProgress.total}` : `上传到 ${deliveryImageUploadAccountIds.length} 个账号` }}
-                        </button>
-                        <button v-if="apiForm.deliveryImageUrl || configuredDeliveryImages.length" type="button" class="btn btn-danger btn-sm" :disabled="deliveryImageUploading" @click="clearAllDeliveryImages">清空全部</button>
-                      </div>
-                      <div v-if="apiForm.deliveryImageUrl" class="delivery-image-item delivery-image-item--legacy">
-                        <img :src="apiForm.deliveryImageUrl" class="delivery-image-control__preview" alt="旧版自动发货图片预览" />
-                        <span><strong>旧版共享图片</strong><small>所有未单独配置的账号继续使用</small></span>
-                        <button type="button" class="btn btn-danger btn-text btn-sm" :disabled="deliveryImageUploading" @click="apiForm.deliveryImageUrl = ''">移除</button>
-                      </div>
-                      <div v-if="configuredDeliveryImages.length" class="delivery-image-list">
-                        <div v-for="item in configuredDeliveryImages" :key="item.accountId" class="delivery-image-item">
-                          <img :src="item.imageUrl" class="delivery-image-control__preview" :alt="`${item.accountName}发货图片预览`" />
-                          <span><strong>{{ item.accountName }}</strong><small>账号 #{{ item.accountId }}</small></span>
-                          <button type="button" class="btn btn-danger btn-text btn-sm" :disabled="deliveryImageUploading" @click="removeAccountDeliveryImage(item.accountId)">移除</button>
-                        </div>
-                      </div>
-                    </div>
-                    <p class="form-hint">发货时按成交账号使用对应图片；商品单独设置发货图片时，以商品图片为准。</p>
-                  </div>
-                  <p class="form-hint">使用 <code>######</code> 分隔，可按顺序拆成多条消息发送。旧模板中的 <code>{kmKey}</code> 仍然兼容。</p>
                 </div>
-              </div>
+              </section>
             </div>
             <div class="modal-footer">
               <button class="btn btn-secondary" @click="showApiDialog = false">取消</button>
@@ -1975,8 +2030,8 @@ onUnmounted(() => {
   font-size: 12px;
 }
 .api-config-form__template {
-  margin-top: 4px;
-  padding-top: 16px;
+  margin-top: 8px;
+  padding-top: 18px;
   border-top: 1px solid rgba(60,60,67,.12);
 }
 .api-config-form__template code {
@@ -1987,7 +2042,7 @@ onUnmounted(() => {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .delivery-image-control {
-  flex: 1 1 calc(100% - 80px);
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2062,14 +2117,16 @@ onUnmounted(() => {
 }
 @media (max-width: 640px) {
   .delivery-image-account-picker__list { grid-template-columns: 1fr; }
+  .delivery-message-preview__item { grid-template-columns: 1fr; gap: 3px; }
+  .delivery-message-step__actions { align-items: flex-start; flex-direction: column; }
 }
 .delivery-template-guide {
-  flex: 1 1 calc(100% - 80px);
-  margin-left: 80px;
+  width: 100%;
   padding: 11px;
   border: 1px solid rgba(10,132,255,.16);
   border-radius: 10px;
   background: rgba(10,132,255,.035);
+  box-sizing: border-box;
 }
 .delivery-template-guide__head {
   display: flex;
@@ -2145,6 +2202,113 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.delivery-flow__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.delivery-flow__heading > div { display: grid; gap: 4px; }
+.delivery-flow__heading strong { color: #1c1c1e; font-size: 15px; }
+.delivery-flow__heading span { color: rgba(28,28,30,.56); font-size: 12px; }
+.delivery-flow__count {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(48,209,88,.10);
+  color: #1b7b3b !important;
+  font-weight: 600;
+}
+.delivery-flow__preview {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 1px 1px 12px;
+}
+.delivery-flow__preview-item {
+  position: relative;
+  min-width: 132px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 1px 7px;
+  padding: 9px 10px;
+  border: 1px solid rgba(10,132,255,.20);
+  border-radius: 8px;
+  background: rgba(10,132,255,.045);
+}
+.delivery-flow__preview-item:not(:last-child)::after {
+  content: '›';
+  position: absolute;
+  right: -7px;
+  z-index: 1;
+  color: rgba(28,28,30,.42);
+  font-size: 17px;
+}
+.delivery-flow__preview-item b {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #0a84ff;
+  color: #fff;
+  font-size: 12px;
+}
+.delivery-flow__preview-item span { color: #1c1c1e; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.delivery-flow__preview-item em { color: rgba(28,28,30,.50); font-size: 11px; font-style: normal; white-space: nowrap; }
+.delivery-flow__preview-item.is-disabled { border-color: rgba(60,60,67,.12); background: rgba(60,60,67,.035); }
+.delivery-flow__preview-item.is-disabled b { background: #a2a2a8; }
+.delivery-message-step {
+  padding: 16px 0;
+  border-top: 1px solid rgba(60,60,67,.10);
+}
+.delivery-message-step:last-child { padding-bottom: 0; }
+.delivery-message-step__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+.delivery-message-step__head > div { display: grid; gap: 2px; }
+.delivery-message-step__head strong { color: #1c1c1e; font-size: 13px; }
+.delivery-message-step__head small { color: rgba(28,28,30,.52); font-size: 11px; }
+.delivery-message-step__number {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #1c1c1e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.delivery-message-step__textarea { width: 100%; box-sizing: border-box; }
+.delivery-message-step__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 9px;
+}
+.delivery-message-step__actions span,
+.delivery-message-step__hint { color: rgba(28,28,30,.55); font-size: 12px; }
+.delivery-message-step__hint { margin: 10px 0; line-height: 1.55; }
+.delivery-message-preview { display: grid; gap: 7px; margin-top: 10px; }
+.delivery-message-preview__item {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 10px;
+  border-left: 3px solid #30a857;
+  background: rgba(48,209,88,.055);
+}
+.delivery-message-preview__item span { color: #24773d; font-size: 11px; font-weight: 600; }
+.delivery-message-preview__item p { margin: 0; overflow: hidden; color: #303036; font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: pre-line; }
 
 .related-goods__warning {
   padding: 10px 12px;
@@ -2629,7 +2793,7 @@ onUnmounted(() => {
   .related-goods__column { max-height: 36vh; min-height: 240px; }
   .related-goods__column + .related-goods__column { border-left: none; border-top: 1px solid rgba(60,60,67,.12); }
   .related-goods__filters { grid-template-columns: 1fr; }
-  .delivery-template-guide { flex-basis: 100%; margin-left: 0; }
+  .delivery-template-guide { width: 100%; }
   .delivery-template-guide__head { align-items: flex-start; flex-direction: column; gap: 3px; }
   .delivery-template-guide__grid { grid-template-columns: 1fr; }
 }
