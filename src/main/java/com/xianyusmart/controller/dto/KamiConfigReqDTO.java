@@ -2,6 +2,8 @@ package com.xianyusmart.controller.dto;
 
 import lombok.Data;
 
+import java.util.Map;
+
 @Data
 public class KamiConfigReqDTO {
 
@@ -22,6 +24,9 @@ public class KamiConfigReqDTO {
     private String deliveryTemplate;
 
     private String deliveryImageUrl;
+
+    /** 每个账号单独上传后的闲鱼图片地址。 */
+    private Map<Long, String> deliveryImageUrls;
 
     private String apiUrl;
 

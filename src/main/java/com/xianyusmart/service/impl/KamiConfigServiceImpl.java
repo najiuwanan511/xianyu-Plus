@@ -29,10 +29,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -124,6 +126,9 @@ public class KamiConfigServiceImpl implements KamiConfigService {
             }
             if (reqDTO.getDeliveryImageUrl() != null) {
                 config.setDeliveryImageUrl(reqDTO.getDeliveryImageUrl().trim());
+            }
+            if (reqDTO.getDeliveryImageUrls() != null) {
+                config.setDeliveryImageUrlsJson(serializeDeliveryImageUrls(reqDTO.getDeliveryImageUrls()));
             }
             if (reqDTO.getApiUrl() != null) {
                 config.setApiUrl(reqDTO.getApiUrl());
@@ -820,6 +825,7 @@ public class KamiConfigServiceImpl implements KamiConfigService {
         dto.setFixedContent(config.getFixedContent());
         dto.setDeliveryTemplate(config.getDeliveryTemplate());
         dto.setDeliveryImageUrl(config.getDeliveryImageUrl());
+        dto.setDeliveryImageUrls(parseDeliveryImageUrls(config));
         dto.setApiUrl(config.getApiUrl());
         dto.setApiMethod(config.getApiMethod());
         dto.setApiHeaders(config.getApiHeaders());
@@ -838,6 +844,76 @@ public class KamiConfigServiceImpl implements KamiConfigService {
         dto.setCreateTime(config.getCreateTime());
         dto.setUpdateTime(config.getUpdateTime());
         return dto;
+    }
+
+    @Override
+    public String resolveDeliveryImageUrl(XianyuKamiConfig config, Long accountId) {
+        if (config == null) return null;
+        if (accountId != null) {
+            String accountImageUrl = parseDeliveryImageUrls(config).get(accountId);
+            if (accountImageUrl != null && !accountImageUrl.isBlank()) {
+                return accountImageUrl.trim();
+            }
+        }
+        String legacyImageUrl = config.getDeliveryImageUrl();
+        return legacyImageUrl == null || legacyImageUrl.isBlank() ? null : legacyImageUrl.trim();
+    }
+
+    private String serializeDeliveryImageUrls(Map<Long, String> imageUrls) {
+        if (imageUrls.size() > 100) {
+            throw new BusinessException(400, "单个卡券库最多配置 100 个账号的发货图片");
+        }
+        Map<Long, String> normalized = new LinkedHashMap<>();
+        imageUrls.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(Comparator.nullsLast(Long::compareTo)))
+                .forEach(entry -> {
+                    Long accountId = entry.getKey();
+                    String imageUrl = entry.getValue() == null ? "" : entry.getValue().trim();
+                    if (accountId == null || accountId <= 0 || imageUrl.isEmpty()) return;
+                    if (imageUrl.length() > 2048) {
+                        throw new BusinessException(400, "发货图片地址不能超过 2048 个字符");
+                    }
+                    try {
+                        URI uri = URI.create(imageUrl);
+                        if (!("http".equalsIgnoreCase(uri.getScheme())
+                                || "https".equalsIgnoreCase(uri.getScheme()))) {
+                            throw new IllegalArgumentException();
+                        }
+                    } catch (IllegalArgumentException exception) {
+                        throw new BusinessException(400, "发货图片地址必须是 HTTP 或 HTTPS 地址");
+                    }
+                    normalized.put(accountId, imageUrl);
+                });
+        if (normalized.isEmpty()) return "{}";
+        try {
+            return objectMapper.writeValueAsString(normalized);
+        } catch (Exception exception) {
+            throw new BusinessException(500, "发货图片配置保存失败");
+        }
+    }
+
+    private Map<Long, String> parseDeliveryImageUrls(XianyuKamiConfig config) {
+        Map<Long, String> result = new LinkedHashMap<>();
+        if (config == null || config.getDeliveryImageUrlsJson() == null
+                || config.getDeliveryImageUrlsJson().isBlank()) {
+            return result;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(config.getDeliveryImageUrlsJson());
+            if (!root.isObject()) return result;
+            root.fields().forEachRemaining(entry -> {
+                try {
+                    long accountId = Long.parseLong(entry.getKey());
+                    String imageUrl = entry.getValue().asText("").trim();
+                    if (accountId > 0 && !imageUrl.isEmpty()) result.put(accountId, imageUrl);
+                } catch (NumberFormatException ignored) {
+                    // Ignore damaged entries while preserving other account images.
+                }
+            });
+        } catch (Exception exception) {
+            log.warn("卡券库 {} 的账号发货图片配置无法解析", config.getId());
+        }
+        return result;
     }
 
     private void validateApiConfig(KamiApiTestReqDTO config) {

@@ -133,10 +133,11 @@ public class KamiDeliveryStrategy implements DeliveryContentStrategy {
     private String applyTemplate(XianyuKamiConfig config, String legacyTemplate, String kamiContent,
                                  DeliveryContext context) {
         XianyuGoodsAutoDeliveryConfig deliveryConfig = context.getDeliveryConfig();
+        String accountImageUrl = kamiConfigService.resolveDeliveryImageUrl(config, context.getAccountId());
         if (deliveryConfig != null
                 && (deliveryConfig.getAutoDeliveryImageUrl() == null || deliveryConfig.getAutoDeliveryImageUrl().isBlank())
-                && config.getDeliveryImageUrl() != null && !config.getDeliveryImageUrl().isBlank()) {
-            deliveryConfig.setAutoDeliveryImageUrl(config.getDeliveryImageUrl().trim());
+                && accountImageUrl != null) {
+            deliveryConfig.setAutoDeliveryImageUrl(accountImageUrl);
         }
         String template = config.getDeliveryTemplate();
         if (template == null || template.isBlank()) {

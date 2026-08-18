@@ -3,6 +3,7 @@ package com.xianyusmart.controller.dto;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Data
 public class KamiConfigRespDTO {
@@ -20,6 +21,9 @@ public class KamiConfigRespDTO {
     private String deliveryTemplate;
 
     private String deliveryImageUrl;
+
+    /** 每个账号单独上传后的闲鱼图片地址。 */
+    private Map<Long, String> deliveryImageUrls;
 
     /** 当前已绑定此卡券库的商品数量。 */
     private Integer relatedGoodsCount;

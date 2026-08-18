@@ -47,6 +47,9 @@ public interface KamiConfigService {
 
     XianyuKamiConfig getConfig(Long kamiConfigId);
 
+    /** 优先返回当前账号专属图片，旧配置则回退到历史共享图片。 */
+    String resolveDeliveryImageUrl(XianyuKamiConfig config, Long accountId);
+
     ResultObject<List<KamiItemRespDTO>> exportKamiItems(KamiExportReqDTO reqDTO);
 
     ResultObject<KamiApiTestRespDTO> testApiConfig(KamiApiTestReqDTO reqDTO);

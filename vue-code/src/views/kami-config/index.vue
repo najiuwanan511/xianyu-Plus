@@ -52,13 +52,15 @@ const apiTestResult = ref('')
 const deliveryImageInput = ref<HTMLInputElement | null>(null)
 const deliveryImageUploading = ref(false)
 const uploadAccounts = ref<Account[]>([])
-const deliveryImageUploadAccountId = ref<number | null>(null)
+const deliveryImageUploadAccountIds = ref<number[]>([])
+const deliveryImageUploadProgress = ref({ completed: 0, total: 0 })
 const apiForm = ref({
   aliasName: '',
   sourceType: 2,
   fixedContent: '',
   deliveryTemplate: '',
   deliveryImageUrl: '',
+  deliveryImageUrls: {} as Record<string, string>,
   importContent: '',
   apiUrl: '',
   apiMethod: 'POST' as 'GET' | 'POST',
@@ -83,6 +85,41 @@ const deliveryTemplateVariables = [
   { token: '{seller_name}', name: '卖家名称', description: '当前发货账号的备注；未设置时显示账号 UNB' },
   { token: '{sku_name}', name: '商品规格', description: '买家下单时选择的规格；无规格时为空' }
 ]
+
+const accountDisplayName = (account?: Account) =>
+  account?.accountNote || account?.unb || (account ? `账号 #${account.id}` : '未知账号')
+
+const uploadCapableAccounts = computed(() => uploadAccounts.value.filter(account => account.status === 1))
+const allUploadAccountsSelected = computed(() => uploadCapableAccounts.value.length > 0
+  && uploadCapableAccounts.value.every(account => deliveryImageUploadAccountIds.value.includes(account.id)))
+const configuredDeliveryImages = computed(() => Object.entries(apiForm.value.deliveryImageUrls)
+  .map(([accountId, imageUrl]) => {
+    const numericAccountId = Number(accountId)
+    return {
+      accountId: numericAccountId,
+      accountName: accountDisplayName(uploadAccounts.value.find(account => account.id === numericAccountId)),
+      imageUrl
+    }
+  })
+  .filter(item => Number.isFinite(item.accountId) && item.imageUrl)
+  .sort((left, right) => left.accountId - right.accountId))
+
+const toggleAllUploadAccounts = () => {
+  deliveryImageUploadAccountIds.value = allUploadAccountsSelected.value
+    ? []
+    : uploadCapableAccounts.value.map(account => account.id)
+}
+
+const removeAccountDeliveryImage = (accountId: number) => {
+  const next = { ...apiForm.value.deliveryImageUrls }
+  delete next[String(accountId)]
+  apiForm.value.deliveryImageUrls = next
+}
+
+const clearAllDeliveryImages = () => {
+  apiForm.value.deliveryImageUrl = ''
+  apiForm.value.deliveryImageUrls = {}
+}
 
 const insertDeliveryTemplateVariable = async (token: string) => {
   const textarea = deliveryTemplateTextarea.value
@@ -263,8 +300,10 @@ const loadUploadAccounts = async () => {
   try {
     const response = await getAccountList()
     uploadAccounts.value = response.data?.accounts || []
-    if (!deliveryImageUploadAccountId.value && uploadAccounts.value[0]) {
-      deliveryImageUploadAccountId.value = uploadAccounts.value[0].id
+    const availableIds = new Set(uploadCapableAccounts.value.map(account => account.id))
+    deliveryImageUploadAccountIds.value = deliveryImageUploadAccountIds.value.filter(id => availableIds.has(id))
+    if (deliveryImageUploadAccountIds.value.length === 0 && uploadCapableAccounts.value[0]) {
+      deliveryImageUploadAccountIds.value = [uploadCapableAccounts.value[0].id]
     }
   } catch (error) {
     console.error('加载图片上传账号失败', error)
@@ -334,6 +373,7 @@ const handleCreate = async () => {
             fixedContent: '',
             deliveryTemplate: '',
             deliveryImageUrl: '',
+            deliveryImageUrls: {},
             importContent: '',
             apiUrl: '',
             apiMethod: 'POST',
@@ -342,6 +382,7 @@ const handleCreate = async () => {
             apiResultPath: '',
             apiTimeoutSeconds: 10
           }
+          void loadUploadAccounts()
           showApiDialog.value = true
         } else {
           loadKamiItems()
@@ -367,6 +408,7 @@ const openApiDialog = () => {
     fixedContent: config.fixedContent || '',
     deliveryTemplate: config.deliveryTemplate || '',
     deliveryImageUrl: config.deliveryImageUrl || '',
+    deliveryImageUrls: { ...(config.deliveryImageUrls || {}) },
     importContent: '',
     apiUrl: config.apiUrl || '',
     apiMethod: (config.apiMethod === 'GET' ? 'GET' : 'POST'),
@@ -375,6 +417,9 @@ const openApiDialog = () => {
     apiResultPath: config.apiResultPath || '',
     apiTimeoutSeconds: config.apiTimeoutSeconds || 10
   }
+  deliveryImageUploadAccountIds.value = Object.keys(config.deliveryImageUrls || {})
+    .map(Number)
+    .filter(Number.isFinite)
   apiTestResult.value = ''
   showApiDialog.value = true
 }
@@ -384,10 +429,11 @@ const chooseDeliveryImage = () => deliveryImageInput.value?.click()
 const uploadDeliveryImage = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
-  const accountId = deliveryImageUploadAccountId.value
   if (!file) return
-  if (!accountId) {
-    toast.warning('请先选择用于上传图片的闲鱼账号')
+  const selectedIds = deliveryImageUploadAccountIds.value.filter(id =>
+    uploadCapableAccounts.value.some(account => account.id === id))
+  if (selectedIds.length === 0) {
+    toast.warning('请至少选择一个用于上传图片的闲鱼账号')
     input.value = ''
     return
   }
@@ -402,18 +448,41 @@ const uploadDeliveryImage = async (event: Event) => {
     return
   }
   deliveryImageUploading.value = true
+  deliveryImageUploadProgress.value = { completed: 0, total: selectedIds.length }
+  const nextImages = { ...apiForm.value.deliveryImageUrls }
+  const succeeded: string[] = []
+  const failed: string[] = []
   try {
-    const response = await uploadImage(accountId, file)
-    if ((response.code === 0 || response.code === 200) && response.data) {
-      apiForm.value.deliveryImageUrl = response.data
-      toast.success('发货图片上传成功')
-    } else {
-      throw new Error(response.msg || '图片上传失败')
+    for (const accountId of selectedIds) {
+      const account = uploadAccounts.value.find(item => item.id === accountId)
+      try {
+        const response = await uploadImage(accountId, file)
+        if ((response.code === 0 || response.code === 200) && response.data) {
+          nextImages[String(accountId)] = response.data
+          succeeded.push(accountDisplayName(account))
+        } else {
+          failed.push(`${accountDisplayName(account)}：${response.msg || '上传失败'}`)
+        }
+      } catch (error) {
+        failed.push(`${accountDisplayName(account)}：${error instanceof Error ? error.message : '上传失败'}`)
+      } finally {
+        deliveryImageUploadProgress.value.completed += 1
+      }
     }
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '图片上传失败')
+    if (succeeded.length > 0) {
+      apiForm.value.deliveryImageUrls = nextImages
+      apiForm.value.deliveryImageUrl = ''
+    }
+    if (failed.length === 0) {
+      toast.success(`已为 ${succeeded.length} 个账号上传发货图片`)
+    } else if (succeeded.length > 0) {
+      toast.warning(`成功 ${succeeded.length} 个，失败 ${failed.length} 个：${failed.join('；')}`)
+    } else {
+      toast.error(failed.join('；'))
+    }
   } finally {
     deliveryImageUploading.value = false
+    deliveryImageUploadProgress.value = { completed: 0, total: 0 }
     input.value = ''
   }
 }
@@ -473,6 +542,7 @@ const handleSaveApi = async () => {
       sourceType: apiForm.value.sourceType,
       deliveryTemplate: apiForm.value.deliveryTemplate.trim(),
       deliveryImageUrl: apiForm.value.deliveryImageUrl.trim(),
+      deliveryImageUrls: apiForm.value.deliveryImageUrls,
       ...(apiForm.value.sourceType === 3 ? {
         fixedContent: apiForm.value.fixedContent
       } : {}),
@@ -1264,21 +1334,42 @@ onUnmounted(() => {
                     <label class="form-label">自动发货图片</label>
                     <div class="delivery-image-control">
                       <input ref="deliveryImageInput" type="file" accept="image/*" class="delivery-image-control__input" @change="uploadDeliveryImage" />
-                      <div class="delivery-image-control__actions">
-                        <select v-model.number="deliveryImageUploadAccountId" class="native-select" :disabled="deliveryImageUploading || uploadAccounts.length === 0">
-                          <option :value="null" disabled>选择上传账号</option>
-                          <option v-for="account in uploadAccounts" :key="account.id" :value="account.id">
-                            {{ account.accountNote || account.unb || `账号 #${account.id}` }}
-                          </option>
-                        </select>
-                        <button type="button" class="btn btn-secondary btn-sm" :disabled="deliveryImageUploading || uploadAccounts.length === 0" @click="chooseDeliveryImage">
-                          {{ deliveryImageUploading ? '上传中…' : (apiForm.deliveryImageUrl ? '更换图片' : '上传图片') }}
-                        </button>
-                        <button v-if="apiForm.deliveryImageUrl" type="button" class="btn btn-danger btn-sm" :disabled="deliveryImageUploading" @click="apiForm.deliveryImageUrl = ''">移除</button>
+                      <div class="delivery-image-account-picker">
+                        <div class="delivery-image-account-picker__head">
+                          <strong>上传账号</strong>
+                          <button type="button" class="btn btn-text btn-sm" :disabled="deliveryImageUploading || uploadCapableAccounts.length === 0" @click="toggleAllUploadAccounts">
+                            {{ allUploadAccountsSelected ? '取消全选' : '全选可用账号' }}
+                          </button>
+                        </div>
+                        <div v-if="uploadAccounts.length" class="delivery-image-account-picker__list">
+                          <label v-for="account in uploadAccounts" :key="account.id" class="delivery-image-account-option" :class="{ 'is-disabled': account.status !== 1 }">
+                            <input v-model="deliveryImageUploadAccountIds" type="checkbox" :value="account.id" :disabled="deliveryImageUploading || account.status !== 1" />
+                            <span>{{ accountDisplayName(account) }}</span>
+                            <em>{{ account.status === 1 ? '可用' : '不可用' }}</em>
+                          </label>
+                        </div>
+                        <span v-else class="delivery-image-account-picker__empty">暂无可用账号</span>
                       </div>
-                      <img v-if="apiForm.deliveryImageUrl" :src="apiForm.deliveryImageUrl" class="delivery-image-control__preview" alt="自动发货图片预览" />
+                      <div class="delivery-image-control__actions">
+                        <button type="button" class="btn btn-secondary btn-sm" :disabled="deliveryImageUploading || deliveryImageUploadAccountIds.length === 0" @click="chooseDeliveryImage">
+                          {{ deliveryImageUploading ? `上传中 ${deliveryImageUploadProgress.completed}/${deliveryImageUploadProgress.total}` : `上传到 ${deliveryImageUploadAccountIds.length} 个账号` }}
+                        </button>
+                        <button v-if="apiForm.deliveryImageUrl || configuredDeliveryImages.length" type="button" class="btn btn-danger btn-sm" :disabled="deliveryImageUploading" @click="clearAllDeliveryImages">清空全部</button>
+                      </div>
+                      <div v-if="apiForm.deliveryImageUrl" class="delivery-image-item delivery-image-item--legacy">
+                        <img :src="apiForm.deliveryImageUrl" class="delivery-image-control__preview" alt="旧版自动发货图片预览" />
+                        <span><strong>旧版共享图片</strong><small>所有未单独配置的账号继续使用</small></span>
+                        <button type="button" class="btn btn-danger btn-text btn-sm" :disabled="deliveryImageUploading" @click="apiForm.deliveryImageUrl = ''">移除</button>
+                      </div>
+                      <div v-if="configuredDeliveryImages.length" class="delivery-image-list">
+                        <div v-for="item in configuredDeliveryImages" :key="item.accountId" class="delivery-image-item">
+                          <img :src="item.imageUrl" class="delivery-image-control__preview" :alt="`${item.accountName}发货图片预览`" />
+                          <span><strong>{{ item.accountName }}</strong><small>账号 #{{ item.accountId }}</small></span>
+                          <button type="button" class="btn btn-danger btn-text btn-sm" :disabled="deliveryImageUploading" @click="removeAccountDeliveryImage(item.accountId)">移除</button>
+                        </div>
+                      </div>
                     </div>
-                    <p class="form-hint">可选。发货文字完成后会发送此图片；商品单独设置发货图片时，以商品图片为准。</p>
+                    <p class="form-hint">发货时按成交账号使用对应图片；商品单独设置发货图片时，以商品图片为准。</p>
                   </div>
                   <p class="form-hint">使用 <code>######</code> 分隔，可按顺序拆成多条消息发送。旧模板中的 <code>{kmKey}</code> 仍然兼容。</p>
                 </div>
@@ -1903,13 +1994,74 @@ onUnmounted(() => {
 }
 .delivery-image-control__input { display: none; }
 .delivery-image-control__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.delivery-image-account-picker {
+  overflow: hidden;
+  border: 1px solid rgba(60,60,67,.14);
+  border-radius: 8px;
+  background: #fff;
+}
+.delivery-image-account-picker__head {
+  min-height: 38px;
+  padding: 5px 10px 5px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid rgba(60,60,67,.10);
+  font-size: 13px;
+}
+.delivery-image-account-picker__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 6px;
+  gap: 4px;
+}
+.delivery-image-account-option {
+  min-width: 0;
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.delivery-image-account-option:hover { background: rgba(10,132,255,.06); }
+.delivery-image-account-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-image-account-option em { color: #16833b; font-size: 11px; font-style: normal; }
+.delivery-image-account-option.is-disabled { opacity: .5; cursor: not-allowed; }
+.delivery-image-account-option.is-disabled em { color: #8e8e93; }
+.delivery-image-account-picker__empty { display: block; padding: 12px; color: #8e8e93; font-size: 12px; }
+.delivery-image-list { display: grid; gap: 8px; }
+.delivery-image-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid rgba(60,60,67,.12);
+  border-radius: 8px;
+  background: rgba(60,60,67,.025);
+}
+.delivery-image-item--legacy { border-style: dashed; }
+.delivery-image-item span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.delivery-image-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.delivery-image-item small { color: #8e8e93; font-size: 11px; }
 .delivery-image-control__preview {
-  width: min(220px, 100%);
-  max-height: 220px;
+  width: 64px;
+  height: 64px;
   object-fit: cover;
   border: 1px solid rgba(60,60,67,.14);
   border-radius: 8px;
   background: rgba(60,60,67,.05);
+}
+@media (max-width: 640px) {
+  .delivery-image-account-picker__list { grid-template-columns: 1fr; }
 }
 .delivery-template-guide {
   flex: 1 1 calc(100% - 80px);

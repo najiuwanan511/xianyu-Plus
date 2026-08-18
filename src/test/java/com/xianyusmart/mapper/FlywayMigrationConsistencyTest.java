@@ -50,6 +50,15 @@ class FlywayMigrationConsistencyTest {
     }
 
     @Test
+    void accountScopedKamiImagesMigrationKeepsLegacyImageColumn() throws IOException {
+        String v34 = new ClassPathResource("db/migration/V34__add_account_scoped_kami_delivery_images.sql")
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertTrue(v34.contains("ADD COLUMN delivery_image_urls_json TEXT NULL"));
+        assertTrue(!v34.contains("DROP COLUMN delivery_image_url"));
+    }
+
+    @Test
     void productMaterialMigrationIsIndependentFromAccounts() throws IOException {
         String v24 = new ClassPathResource("db/migration/V24__add_product_material.sql")
                 .getContentAsString(StandardCharsets.UTF_8);

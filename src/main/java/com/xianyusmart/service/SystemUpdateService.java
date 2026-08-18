@@ -497,6 +497,15 @@ public class SystemUpdateService {
     private void applyBundledReleaseNotes(SystemUpdateStatusRespDTO status) {
         if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) return;
         String version = normalizeVersion(status.getLatestVersion());
+        if ("2.3.1".equals(version)) {
+            status.setUpdateHighlights(List.of(
+                    "卡券库发货图片支持一次勾选多个账号并逐个上传",
+                    "订单发货时按成交账号使用对应图片，避免多账号共用商品时图片失效",
+                    "可分别查看、替换或移除每个账号的发货图片",
+                    "旧版单图片配置继续兼容，备份恢复会按账号保留图片绑定"
+            ));
+            return;
+        }
         if ("2.3.0".equals(version)) {
             status.setUpdateHighlights(List.of(
                     "每个正常账号随机每5至8小时自动执行一次完整连接修复",

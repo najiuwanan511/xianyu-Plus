@@ -1,6 +1,8 @@
 package com.xianyusmart.backup.handler;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyusmart.backup.DataBackupHandler;
 import com.xianyusmart.entity.XianyuAccount;
 import com.xianyusmart.entity.XianyuKamiConfig;
@@ -17,6 +19,8 @@ import java.util.*;
 @Slf4j
 @Component
 public class KamiBackupHandler implements DataBackupHandler {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     private XianyuKamiConfigMapper kamiConfigMapper;
@@ -60,6 +64,7 @@ public class KamiBackupHandler implements DataBackupHandler {
             map.put("fixedContent", config.getFixedContent());
             map.put("deliveryTemplate", config.getDeliveryTemplate());
             map.put("deliveryImageUrl", config.getDeliveryImageUrl());
+            map.put("deliveryImages", exportDeliveryImages(config));
             map.put("apiUrl", config.getApiUrl());
             map.put("apiMethod", config.getApiMethod());
             map.put("apiHeaders", config.getApiHeaders());
@@ -142,6 +147,7 @@ public class KamiBackupHandler implements DataBackupHandler {
                     config.setFixedContent((String) map.get("fixedContent"));
                     config.setDeliveryTemplate((String) map.get("deliveryTemplate"));
                     config.setDeliveryImageUrl((String) map.get("deliveryImageUrl"));
+                    config.setDeliveryImageUrlsJson(importDeliveryImages(map.get("deliveryImages"), unbToAccountId));
                     config.setApiUrl((String) map.get("apiUrl"));
                     config.setApiMethod((String) map.get("apiMethod"));
                     config.setApiHeaders((String) map.get("apiHeaders"));
@@ -212,6 +218,49 @@ public class KamiBackupHandler implements DataBackupHandler {
             if (skippedCount > 0) {
                 log.warn("[KamiBackup] 共跳过 {} 条卡密项数据（配置不存在）", skippedCount);
             }
+        }
+    }
+
+    private Map<String, String> exportDeliveryImages(XianyuKamiConfig config) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (config.getDeliveryImageUrlsJson() == null || config.getDeliveryImageUrlsJson().isBlank()) {
+            return result;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(config.getDeliveryImageUrlsJson());
+            if (!root.isObject()) return result;
+            root.fields().forEachRemaining(entry -> {
+                try {
+                    XianyuAccount account = accountMapper.selectById(Long.parseLong(entry.getKey()));
+                    String imageUrl = entry.getValue().asText("").trim();
+                    if (account != null && account.getUnb() != null && !imageUrl.isEmpty()) {
+                        result.put(account.getUnb(), imageUrl);
+                    }
+                } catch (NumberFormatException ignored) {
+                    // Ignore a damaged account key while preserving valid mappings.
+                }
+            });
+        } catch (Exception exception) {
+            log.warn("[KamiBackup] 卡券库 {} 的账号图片配置无法导出", config.getId());
+        }
+        return result;
+    }
+
+    private String importDeliveryImages(Object value, Map<String, Long> unbToAccountId) {
+        if (!(value instanceof Map<?, ?> deliveryImages)) return null;
+        if (deliveryImages.isEmpty()) return "{}";
+        Map<Long, String> restored = new LinkedHashMap<>();
+        deliveryImages.forEach((unbValue, imageUrlValue) -> {
+            Long accountId = unbToAccountId.get(String.valueOf(unbValue));
+            String imageUrl = imageUrlValue == null ? "" : String.valueOf(imageUrlValue).trim();
+            if (accountId != null && !imageUrl.isEmpty()) restored.put(accountId, imageUrl);
+        });
+        if (restored.isEmpty()) return "{}";
+        try {
+            return objectMapper.writeValueAsString(restored);
+        } catch (Exception exception) {
+            log.warn("[KamiBackup] 账号图片配置无法恢复: {}", exception.getMessage());
+            return null;
         }
     }
 }

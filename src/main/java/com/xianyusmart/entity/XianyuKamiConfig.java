@@ -28,6 +28,9 @@ public class XianyuKamiConfig {
     /** 卡券库统一发货图片；商品单独配置图片时优先使用商品图片。 */
     private String deliveryImageUrl;
 
+    /** 按闲鱼账号保存的发货图片 URL，JSON 对象的键为账号 ID。 */
+    private String deliveryImageUrlsJson;
+
     /** 外部 API 卡券配置，仅 sourceType=2 时使用。 */
     private String apiUrl;
 

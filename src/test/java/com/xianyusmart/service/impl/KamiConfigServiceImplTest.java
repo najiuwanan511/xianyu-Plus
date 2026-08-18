@@ -1,12 +1,14 @@
 package com.xianyusmart.service.impl;
 
 import com.xianyusmart.common.ResultObject;
+import com.xianyusmart.controller.dto.KamiConfigReqDTO;
 import com.xianyusmart.entity.XianyuKamiConfig;
 import com.xianyusmart.entity.XianyuKamiItem;
 import com.xianyusmart.entity.XianyuKamiUsageRecord;
 import com.xianyusmart.mapper.XianyuKamiConfigMapper;
 import com.xianyusmart.mapper.XianyuKamiItemMapper;
 import com.xianyusmart.mapper.XianyuKamiUsageRecordMapper;
+import com.xianyusmart.mapper.XianyuGoodsAutoDeliveryConfigMapper;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,6 +22,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 @ExtendWith(MockitoExtension.class)
 class KamiConfigServiceImplTest {
 
@@ -29,6 +35,8 @@ class KamiConfigServiceImplTest {
     private XianyuKamiItemMapper kamiItemMapper;
     @Mock
     private XianyuKamiUsageRecordMapper kamiUsageRecordMapper;
+    @Mock
+    private XianyuGoodsAutoDeliveryConfigMapper autoDeliveryConfigMapper;
     @InjectMocks
     private KamiConfigServiceImpl service;
 
@@ -95,6 +103,55 @@ class KamiConfigServiceImplTest {
         assertEquals("order-1", captor.getValue().getOrderId());
         assertEquals("NEW-CARD", captor.getValue().getKamiContent());
         verify(kamiItemMapper).commitReservation("order-1#R#attempt", "order-1");
+    }
+
+    @Test
+    void resolvesImageUploadedByTheCurrentSellerAccount() {
+        XianyuKamiConfig config = new XianyuKamiConfig();
+        config.setDeliveryImageUrl("https://legacy.example/image.jpg");
+        config.setDeliveryImageUrlsJson("{\"2\":\"https://cdn.example/account-2.jpg\",\"3\":\"https://cdn.example/account-3.jpg\"}");
+
+        assertEquals("https://cdn.example/account-2.jpg", service.resolveDeliveryImageUrl(config, 2L));
+        assertEquals("https://cdn.example/account-3.jpg", service.resolveDeliveryImageUrl(config, 3L));
+    }
+
+    @Test
+    void fallsBackToLegacyImageForExistingConfigurations() {
+        XianyuKamiConfig config = new XianyuKamiConfig();
+        config.setDeliveryImageUrl(" https://legacy.example/image.jpg ");
+        config.setDeliveryImageUrlsJson("{\"2\":\"https://cdn.example/account-2.jpg\"}");
+
+        assertEquals("https://legacy.example/image.jpg", service.resolveDeliveryImageUrl(config, 9L));
+    }
+
+    @Test
+    void savesAndClearsAccountScopedImagesExplicitly() {
+        XianyuKamiConfig config = new XianyuKamiConfig();
+        config.setId(7L);
+        config.setAliasName("共享卡券");
+        config.setSourceType(1);
+        config.setTotalCount(0);
+        config.setUsedCount(0);
+        when(kamiConfigMapper.selectById(7L)).thenReturn(config);
+        when(kamiItemMapper.countUnused(7L)).thenReturn(0);
+        when(autoDeliveryConfigMapper.findDefaultByKamiConfigId(7L)).thenReturn(List.of());
+
+        KamiConfigReqDTO request = new KamiConfigReqDTO();
+        request.setId(7L);
+        Map<Long, String> images = new LinkedHashMap<>();
+        images.put(2L, " https://cdn.example/account-2.jpg ");
+        images.put(3L, "https://cdn.example/account-3.jpg");
+        request.setDeliveryImageUrls(images);
+
+        ResultObject<?> saved = service.createOrUpdateConfig(request);
+        assertEquals(200, saved.getCode());
+        assertEquals("{\"2\":\"https://cdn.example/account-2.jpg\",\"3\":\"https://cdn.example/account-3.jpg\"}",
+                config.getDeliveryImageUrlsJson());
+
+        request.setDeliveryImageUrls(Map.of());
+        ResultObject<?> cleared = service.createOrUpdateConfig(request);
+        assertEquals(200, cleared.getCode());
+        assertEquals("{}", config.getDeliveryImageUrlsJson());
     }
 
     private XianyuKamiItem item(Long id, Long configId, int status) {
