@@ -9,6 +9,9 @@ import com.xianyusmart.mapper.XianyuGoodsConfigMapper;
 import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
 import com.xianyusmart.service.BuyerBlacklistService;
 import com.xianyusmart.service.GoodsSkuService;
+import com.xianyusmart.service.ImageDimensionService;
+import com.xianyusmart.service.SentMessageSaveService;
+import com.xianyusmart.service.WebSocketService;
 import com.xianyusmart.service.delivery.OrderDetailFetcher;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -27,6 +30,32 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AutoDeliveryServiceImplTest {
+
+    @Test
+    void sendsDeliveryImagesWithTheirActualDimensions() {
+        ImageDimensionService dimensionService = mock(ImageDimensionService.class);
+        WebSocketService webSocketService = mock(WebSocketService.class);
+        BuyerBlacklistService blacklistService = mock(BuyerBlacklistService.class);
+        SentMessageSaveService sentMessageSaveService = mock(SentMessageSaveService.class);
+        XianyuGoodsAutoDeliveryConfig config = new XianyuGoodsAutoDeliveryConfig();
+        config.setAutoDeliveryImageUrl("https://img.example.test/portrait.jpg");
+        when(dimensionService.resolve(config.getAutoDeliveryImageUrl()))
+                .thenReturn(new ImageDimensionService.ImageDimensions(720, 1280));
+        when(webSocketService.sendImageMessage(
+                7L, "cid-1", "buyer-42", config.getAutoDeliveryImageUrl(), 720, 1280)).thenReturn(true);
+
+        AutoDeliveryServiceImpl service = new AutoDeliveryServiceImpl();
+        ReflectionTestUtils.setField(service, "imageDimensionService", dimensionService);
+        ReflectionTestUtils.setField(service, "webSocketService", webSocketService);
+        ReflectionTestUtils.setField(service, "blacklistService", blacklistService);
+        ReflectionTestUtils.setField(service, "sentMessageSaveService", sentMessageSaveService);
+
+        ReflectionTestUtils.invokeMethod(service, "sendDeliveryImages",
+                7L, "goods-1", "cid-1", "buyer-42", config, false);
+
+        verify(webSocketService).sendImageMessage(
+                7L, "cid-1", "buyer-42", config.getAutoDeliveryImageUrl(), 720, 1280);
+    }
 
     @Test
     void usesTheOrderBuyerAsTheDeliveryRecipient() {

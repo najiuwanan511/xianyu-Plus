@@ -6,6 +6,7 @@ import com.xianyusmart.controller.dto.UpdateCookieReqDTO;
 import com.xianyusmart.controller.dto.UpdateCookieRespDTO;
 import com.xianyusmart.service.CookieRefreshService;
 import com.xianyusmart.service.WebSocketService;
+import com.xianyusmart.service.ImageDimensionService;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,9 @@ public class WebSocketController {
 
     @Autowired
     private WebSocketService webSocketService;
+
+    @Autowired
+    private ImageDimensionService imageDimensionService;
     
     @Autowired
     private org.springframework.context.ApplicationContext applicationContext;
@@ -285,9 +289,10 @@ public class WebSocketController {
                 return ResultObject.failed("WebSocket未连接，请先启动连接");
             }
             
-            // 获取图片尺寸，默认800x600
-            int width = reqDTO.getWidth() != null && reqDTO.getWidth() > 0 ? reqDTO.getWidth() : 800;
-            int height = reqDTO.getHeight() != null && reqDTO.getHeight() > 0 ? reqDTO.getHeight() : 600;
+            // 前端尺寸可能是旧版本固定值，服务端必须以图片本身的真实尺寸为准。
+            ImageDimensionService.ImageDimensions dimensions = imageDimensionService.resolve(reqDTO.getImageUrl());
+            int width = dimensions.width();
+            int height = dimensions.height();
             
             // 在线客服一旦主动发送，立即接管真实会话并取消尚未发出的自动回复。
             String sId = reqDTO.getCid() + "@goofish";
@@ -1051,8 +1056,8 @@ public class WebSocketController {
         private String cid;            // 会话ID（不带@goofish后缀）
         private String toId;           // 接收方用户ID（不带@goofish后缀）
         private String imageUrl;       // 图片URL
-        private Integer width;         // 图片宽度（可选，默认800）
-        private Integer height;        // 图片高度（可选，默认600）
+        private Integer width;         // 兼容旧客户端，服务端会重新读取真实宽度
+        private Integer height;        // 兼容旧客户端，服务端会重新读取真实高度
         private String xyGoodsId;      // 闲鱼商品ID（可选）
     }
     

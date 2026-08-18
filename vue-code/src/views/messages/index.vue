@@ -558,8 +558,6 @@ const sendReply = async () => {
         cid,
         toId,
         imageUrl,
-        width: 800,
-        height: 800,
         xyGoodsId: selectedSession.value.xyGoodsId
       })
       ensureSuccess(response)

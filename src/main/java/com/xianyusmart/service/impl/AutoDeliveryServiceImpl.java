@@ -24,6 +24,7 @@ import com.xianyusmart.entity.XianyuAccount;
 import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xianyusmart.service.WebSocketService;
+import com.xianyusmart.service.ImageDimensionService;
 import com.xianyusmart.service.delivery.DeliveryContext;
 import com.xianyusmart.service.delivery.DeliveryStrategyResolver;
 import com.xianyusmart.service.delivery.DeliveryMessageTemplateRenderer;
@@ -89,6 +90,9 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
     @Lazy
     @Autowired
     private WebSocketService webSocketService;
+
+    @Autowired
+    private ImageDimensionService imageDimensionService;
     
     @Autowired
     private com.xianyusmart.service.SentMessageSaveService sentMessageSaveService;
@@ -929,7 +933,9 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                         try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                     }
                 }
-                boolean imgSuccess = webSocketService.sendImageMessage(accountId, cid, toId, url, 800, 800);
+                ImageDimensionService.ImageDimensions dimensions = imageDimensionService.resolve(url);
+                boolean imgSuccess = webSocketService.sendImageMessage(
+                        accountId, cid, toId, url, dimensions.width(), dimensions.height());
                 if (imgSuccess) {
                     sent++;
                     log.info("【账号{}】自动发货图片[{}/{}]发送成功: xyGoodsId={}", accountId, i + 1, imageUrls.length, xyGoodsId);

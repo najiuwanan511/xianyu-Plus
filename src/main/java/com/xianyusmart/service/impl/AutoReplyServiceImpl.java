@@ -19,6 +19,7 @@ import com.xianyusmart.service.AIService;
 import com.xianyusmart.service.AutoReplyService;
 import com.xianyusmart.service.BuyerBlacklistService;
 import com.xianyusmart.service.WebSocketService;
+import com.xianyusmart.service.ImageDimensionService;
 import com.xianyusmart.service.NotificationChannelService;
 import com.xianyusmart.service.reply.ReplyStrategy;
 import com.xianyusmart.service.reply.ReplyStrategyResolver;
@@ -58,6 +59,9 @@ public class AutoReplyServiceImpl implements AutoReplyService {
     
     @Autowired
     private WebSocketService webSocketService;
+
+    @Autowired
+    private ImageDimensionService imageDimensionService;
     
     @Autowired(required = false)
     private AIService aiService;
@@ -364,7 +368,9 @@ public class AutoReplyServiceImpl implements AutoReplyService {
                     hasReplyContent = true;
                     ensureExternalAttemptAllowed(externalAttemptAllowed);
                     externalSendAttempted = true;
-                    boolean imageSent = webSocketService.sendImageMessageWithResult(accountId, cid, toId, item.getImageUrl(), 0, 0);
+                    ImageDimensionService.ImageDimensions dimensions = imageDimensionService.resolve(item.getImageUrl());
+                    boolean imageSent = webSocketService.sendImageMessageWithResult(
+                            accountId, cid, toId, item.getImageUrl(), dimensions.width(), dimensions.height());
                     if (!imageSent) {
                         sendSuccess = false;
                         log.warn("【账号{}】发送回复图片失败", accountId);

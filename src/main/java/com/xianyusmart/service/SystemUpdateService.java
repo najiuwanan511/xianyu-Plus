@@ -497,6 +497,14 @@ public class SystemUpdateService {
     private void applyBundledReleaseNotes(SystemUpdateStatusRespDTO status) {
         if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) return;
         String version = normalizeVersion(status.getLatestVersion());
+        if ("2.3.2".equals(version)) {
+            status.setUpdateHighlights(List.of(
+                    "自动发货图片按真实宽高发送，修复手机端竖图变窄和底部大块空白",
+                    "自动回复与网页客服发送图片统一使用真实尺寸",
+                    "图片尺寸读取失败时不再伪造800乘800的正方形尺寸"
+            ));
+            return;
+        }
         if ("2.3.1".equals(version)) {
             status.setUpdateHighlights(List.of(
                     "卡券库发货图片支持一次勾选多个账号并逐个上传",

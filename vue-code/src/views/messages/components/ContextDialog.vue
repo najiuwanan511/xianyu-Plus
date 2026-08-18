@@ -232,8 +232,6 @@ const handleSend = async () => {
           cid,
           toId,
           imageUrl: url,
-          width: 800,
-          height: 800,
           xyGoodsId: props.xyGoodsId
         })
       }
