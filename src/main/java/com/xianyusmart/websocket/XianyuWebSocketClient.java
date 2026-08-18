@@ -937,8 +937,10 @@ public class XianyuWebSocketClient extends WebSocketClient {
                 }
                 return success;
             } catch (java.util.concurrent.TimeoutException e) {
-                log.warn("{}图片消息发送超时(10秒)，未取得服务端回执: mid={}", logPrefix(), mid);
-                return false;
+                // 图片帧已成功写入已连接的 WebSocket。平台偶发不返回图片回执时，买家仍可能收到图片；
+                // 继续发送后续卡密文字，避免把已送达图片误判为失败而提前终止整笔发货。
+                log.warn("{}图片消息回执超时（10秒），图片已提交至平台，按已发送处理: mid={}", logPrefix(), mid);
+                return true;
             } finally {
                 pendingResponses.remove(mid);
             }

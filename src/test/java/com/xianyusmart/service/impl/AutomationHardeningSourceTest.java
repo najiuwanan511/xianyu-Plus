@@ -53,7 +53,8 @@ class AutomationHardeningSourceTest {
                 "src/main/java/com/xianyusmart/websocket/XianyuWebSocketClient.java"));
 
         assertTrue(source.contains("消息已提交至平台，按已发送处理"));
-        assertEquals(1, occurrences(source, "未取得服务端回执"));
+        assertTrue(source.contains("图片已提交至平台，按已发送处理"));
+        assertEquals(2, occurrences(source, "按已发送处理"));
     }
 
     @Test

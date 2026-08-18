@@ -497,6 +497,14 @@ public class SystemUpdateService {
     private void applyBundledReleaseNotes(SystemUpdateStatusRespDTO status) {
         if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) return;
         String version = normalizeVersion(status.getLatestVersion());
+        if ("2.3.4".equals(version)) {
+            status.setUpdateHighlights(List.of(
+                    "修复图片已经送达但未返回回执时，卡密文字被提前中止的问题",
+                    "图片回执超时按已提交处理，继续发送后续卡密文字",
+                    "保留图片先发、卡密后发以及图片后的发送间隔"
+            ));
+            return;
+        }
         if ("2.3.3".equals(version)) {
             status.setUpdateHighlights(List.of(
                     "保持图片先发、卡密文字后发的顺序",
