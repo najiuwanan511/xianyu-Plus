@@ -497,6 +497,14 @@ public class SystemUpdateService {
     private void applyBundledReleaseNotes(SystemUpdateStatusRespDTO status) {
         if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) return;
         String version = normalizeVersion(status.getLatestVersion());
+        if ("2.3.3".equals(version)) {
+            status.setUpdateHighlights(List.of(
+                    "保持图片先发、卡密文字后发的顺序",
+                    "图片取得平台回执后增加发送间隔，避免卡密文字被平台丢弃",
+                    "自动发货和手动补发均修复，未配置图片时不增加等待"
+            ));
+            return;
+        }
         if ("2.3.2".equals(version)) {
             status.setUpdateHighlights(List.of(
                     "自动发货图片按真实宽高发送，修复手机端竖图变窄和底部大块空白",

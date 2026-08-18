@@ -61,6 +61,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
     /** A retry could duplicate text that has already reached the buyer. */
     public static final String PARTIAL_DELIVERY_REVIEW_PREFIX = "PARTIAL_DELIVERY_REVIEW: ";
     public static final String BUYER_VERIFICATION_PENDING_PREFIX = "BUYER_VERIFICATION_PENDING: ";
+    private static final long IMAGE_TO_TEXT_DELAY_MS = 1500L;
     private final Set<String> activeManualRedeliveries = ConcurrentHashMap.newKeySet();
     
     @Autowired
@@ -525,6 +526,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 updateRecordState(record.getId(), -1, null, reason);
                 return com.xianyusmart.common.ResultObject.failed(reason);
             }
+            pauseBeforeDeliveryText(false, imageResult.configured());
 
             List<String> messages = messageTemplateRenderer.splitMessages(content);
             int sentCount = 0;
@@ -780,6 +782,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                     emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
                     return;
                 }
+                pauseBeforeDeliveryText(needHumanLikeDelay, imageResult.configured());
 
                 List<String> messages = messageTemplateRenderer.splitMessages(content);
                 int sentInThisDelivery = 0;
@@ -954,6 +957,23 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
 
     private record ImageDeliveryResult(int configured, int sent, int failed) {
         boolean success() { return failed == 0 && sent == configured; }
+    }
+
+    /** Give the platform time to commit an image message before sending the card text. */
+    private void pauseBeforeDeliveryText(boolean needHumanLikeDelay, int configuredImageCount) {
+        if (configuredImageCount == 0) {
+            return;
+        }
+        if (needHumanLikeDelay) {
+            HumanLikeDelayUtils.thinkingDelay();
+            return;
+        }
+        try {
+            Thread.sleep(IMAGE_TO_TEXT_DELAY_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("图片与卡密消息之间的发送间隔被中断", e);
+        }
     }
 
     private void notifyNewOrderAfterDelivery(Long accountId, Long recordId, String content) {
