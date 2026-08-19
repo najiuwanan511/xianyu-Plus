@@ -135,7 +135,11 @@ public class AccountServiceImpl implements AccountService {
                 // 账号已存在，更新信息
                 accountId = existingAccount.getId();
                 existingAccount.setAccountNote(accountNote);
-                existingAccount.setStatus(1); // 正常状态
+                // A new Cookie is only the first recovery step. Accounts paused
+                // for verification return to normal after WebSocket initialization.
+                if (!Integer.valueOf(-2).equals(existingAccount.getStatus())) {
+                    existingAccount.setStatus(1);
+                }
                 existingAccount.setUpdatedTime(getCurrentTimeString());
                 accountMapper.updateById(existingAccount);
                 log.info("账号已存在，更新账号信息: accountId={}", accountId);

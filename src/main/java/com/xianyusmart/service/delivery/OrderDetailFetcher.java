@@ -2,6 +2,7 @@ package com.xianyusmart.service.delivery;
 
 import com.xianyusmart.service.AccountService;
 import com.xianyusmart.service.GoodsSkuService;
+import com.xianyusmart.service.TokenRefreshService;
 import com.xianyusmart.utils.XianyuApiCallUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,9 @@ public class OrderDetailFetcher {
 
     @Autowired
     private XianyuApiCallUtils xianyuApiCallUtils;
+
+    @Autowired
+    private TokenRefreshService tokenRefreshService;
 
     @Autowired
     private SkuResolver skuResolver;
@@ -70,8 +74,7 @@ public class OrderDetailFetcher {
             Map<String, Object> dataMap = new HashMap<>();
             dataMap.put("tid", orderId);
 
-            XianyuApiCallUtils.ApiCallResult result = xianyuApiCallUtils.callApiWithRetry(
-                    accountId, "mtop.taobao.idle.trade.merchant.full.info", dataMap, cookieStr);
+            XianyuApiCallUtils.ApiCallResult result = fetchOrderDetailApi(accountId, dataMap, cookieStr, orderId);
 
             if (!result.isSuccess()) {
                 log.warn("【账号{}】获取订单详情失败: orderId={}, error={}", accountId, orderId, result.getErrorMessage());
@@ -104,6 +107,41 @@ public class OrderDetailFetcher {
         } catch (Exception e) {
             log.warn("【账号{}】获取订单详情异常: orderId={}", accountId, orderId, e);
             return null;
+        }
+    }
+
+    /**
+     * The generic API retry path keeps the login cookie alive, but an expired
+     * _m_h5_tk can still survive that check. Refresh the signing token once
+     * before treating the order as unavailable; no delivery content is
+     * reserved until this method returns successfully.
+     */
+    private XianyuApiCallUtils.ApiCallResult fetchOrderDetailApi(Long accountId,
+                                                                  Map<String, Object> dataMap,
+                                                                  String cookieStr,
+                                                                  String orderId) {
+        XianyuApiCallUtils.ApiCallResult result = xianyuApiCallUtils.callApiWithRetry(
+                accountId, "mtop.taobao.idle.trade.merchant.full.info", dataMap, cookieStr);
+        if (result.isSuccess() || !result.isTokenExpired()) {
+            return result;
+        }
+
+        log.warn("【账号{}】订单详情令牌已过期，主动刷新_m_h5_tk后重试: orderId={}", accountId, orderId);
+        try {
+            if (!tokenRefreshService.refreshMh5tkToken(accountId)) {
+                log.warn("【账号{}】订单详情_m_h5_tk刷新失败，等待后续重试: orderId={}", accountId, orderId);
+                return result;
+            }
+            String refreshedCookie = accountService.getCookieByAccountId(accountId);
+            if (refreshedCookie == null || refreshedCookie.isBlank()) {
+                log.warn("【账号{}】订单详情令牌刷新后未读取到最新Cookie: orderId={}", accountId, orderId);
+                return result;
+            }
+            return xianyuApiCallUtils.callApiWithRetry(
+                    accountId, "mtop.taobao.idle.trade.merchant.full.info", dataMap, refreshedCookie);
+        } catch (Exception e) {
+            log.warn("【账号{}】订单详情令牌刷新重试异常: orderId={}", accountId, orderId, e);
+            return result;
         }
     }
 

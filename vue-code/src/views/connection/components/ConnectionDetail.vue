@@ -179,9 +179,25 @@ const handleVerificationWindowFocus = () => {
   beginQRUpdateAfterVerification()
 }
 
+const getVerificationUrl = () => {
+  const captchaUrl = connectionStatus.value?.captchaUrl?.trim()
+  if (!captchaUrl) return 'https://www.goofish.com/im'
+
+  try {
+    const url = new URL(captchaUrl)
+    const host = url.hostname.toLowerCase()
+    const trustedHost = host === 'goofish.com' || host.endsWith('.goofish.com')
+      || host === 'taobao.com' || host.endsWith('.taobao.com')
+      || host === 'alibaba.com' || host.endsWith('.alibaba.com')
+    return url.protocol === 'https:' && trustedHost ? url.toString() : 'https://www.goofish.com/im'
+  } catch {
+    return 'https://www.goofish.com/im'
+  }
+}
+
 const handleOpenSecurityVerification = () => {
   clearVerificationReturnWatch()
-  const opened = window.open('https://www.goofish.com/im', '_blank')
+  const opened = window.open(getVerificationUrl(), '_blank')
   if (!opened) {
     showError('浏览器拦截了新窗口，请允许本站打开闲鱼页面')
     return false

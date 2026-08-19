@@ -351,7 +351,6 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
                 if (success) {
                     log.info("【账号{}】✅ Cookie刷新成功", accountId);
-                    updateAccountStatusToNormal(accountId, "Cookie刷新成功，账号状态恢复正常");
 
                     // 记录操作日志
                     operationLogService.log(accountId,
@@ -562,35 +561,6 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                     OperationConstants.Type.UPDATE,
                     OperationConstants.Module.ACCOUNT,
                     "Cookie刷新失败后更新账号状态异常",
-                    OperationConstants.Status.FAIL,
-                    OperationConstants.TargetType.ACCOUNT,
-                    String.valueOf(accountId),
-                    null, null, e.getMessage(), null);
-        }
-    }
-
-    private void updateAccountStatusToNormal(Long accountId, String reason) {
-        try {
-            XianyuAccount account = accountMapper.selectById(accountId);
-            if (account != null && Objects.equals(account.getStatus(), -2)) {
-                account.setStatus(1);
-                accountMapper.updateById(account);
-                log.info("【账号{}】Cookie刷新成功后，账号状态已恢复为1（正常）", accountId);
-                operationLogService.log(accountId,
-                        OperationConstants.Type.UPDATE,
-                        OperationConstants.Module.ACCOUNT,
-                        "Cookie刷新成功，账号状态已恢复正常",
-                        OperationConstants.Status.SUCCESS,
-                        OperationConstants.TargetType.ACCOUNT,
-                        String.valueOf(accountId),
-                        null, null, reason, null);
-            }
-        } catch (Exception e) {
-            log.error("【账号{}】Cookie刷新成功后恢复账号状态失败", accountId, e);
-            operationLogService.log(accountId,
-                    OperationConstants.Type.UPDATE,
-                    OperationConstants.Module.ACCOUNT,
-                    "Cookie刷新成功后恢复账号状态失败",
                     OperationConstants.Status.FAIL,
                     OperationConstants.TargetType.ACCOUNT,
                     String.valueOf(accountId),

@@ -347,9 +347,6 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                             // 保存 token 到数据库
                             saveTokenToDatabase(accountId, accessToken);
 
-                            // 更新账号状态为正常（1）
-                            updateAccountStatusToNormal(accountId);
-
                             log.info("【账号{}】accessToken获取成功并已保存到数据库", accountId);
 
                             operationLogService.log(accountId,
@@ -987,22 +984,6 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
         } catch (Exception e) {
             log.error("【账号{}】更新账号状态失败", accountId, e);
             return true;
-        }
-    }
-
-    /**
-     * 更新账号状态为正常（1）
-     */
-    private void updateAccountStatusToNormal(Long accountId) {
-        try {
-            com.xianyusmart.entity.XianyuAccount account = xianyuAccountMapper.selectById(accountId);
-            if (account != null && account.getStatus() == -2) {
-                account.setStatus(1);
-                xianyuAccountMapper.updateById(account);
-                log.info("【账号{}】账号状态已恢复为1（正常）", accountId);
-            }
-        } catch (Exception e) {
-            log.error("【账号{}】更新账号状态失败", accountId, e);
         }
     }
 

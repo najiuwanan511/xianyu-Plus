@@ -2,6 +2,7 @@ package com.xianyusmart.service.impl;
 
 import com.xianyusmart.config.WebSocketConfig;
 import com.xianyusmart.constants.OperationConstants;
+import com.xianyusmart.entity.XianyuAccount;
 import com.xianyusmart.service.AccountService;
 import com.xianyusmart.service.OperationLogService;
 
@@ -71,6 +72,9 @@ public class WebSocketServiceImpl implements WebSocketService {
     @Autowired
     private NotificationChannelService notificationChannelService;
 
+    @Autowired
+    private CredentialUpdateCoordinator credentialUpdateCoordinator;
+
 
     // 存储WebSocket客户端
     private final Map<Long, XianyuWebSocketClient> webSocketClients = new ConcurrentHashMap<>();
@@ -132,9 +136,20 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Override
     public boolean startWebSocket(Long accountId) {
+        return startWebSocket(accountId, false);
+    }
+
+    /**
+     * A freshly submitted Cookie may belong to an account still marked -2 from
+     * the previous verification episode. Let that one credential recovery pass
+     * through token validation; normal/manual starts remain blocked until the
+     * token request itself succeeds.
+     */
+    private boolean startWebSocket(Long accountId, boolean allowCredentialRecovery) {
         try {
             log.info("启动WebSocket连接: accountId={}", accountId);
-            if (!isAccountActive(accountId)) {
+            if (!isAccountActive(accountId)
+                    && !(allowCredentialRecovery && isVerificationRecoveryCandidate(accountId))) {
                 log.info("跳过WebSocket连接：账号已禁用、不存在或仍待验证, accountId={}", accountId);
                 return false;
             }
@@ -362,7 +377,10 @@ public class WebSocketServiceImpl implements WebSocketService {
                 log.info("开始WebSocket初始化流程: accountId={}", accountId);
                 initializer.initialize(client, accessToken, deviceId, String.valueOf(accountId));
                 
-                // 启动心跳任务
+                // 握手和初始化均成功后才恢复账号状态；后续定时任务会读取该状态。
+                markAccountConnected(accountId);
+
+                // 启动心跳任务和下一次Token刷新
                 startHeartbeat(accountId, client);
                 
                 log.info("WebSocket连接成功: accountId={}", accountId);
@@ -455,22 +473,31 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Override
     public boolean restartAfterCredentialUpdate(Long accountId) {
-        try {
-            log.info("凭证已更新，立即重建WebSocket连接: accountId={}", accountId);
+        return credentialUpdateCoordinator.withAccountLock(accountId,
+                () -> restartAfterCredentialUpdateLocked(accountId));
+    }
 
-            if (!isAccountActive(accountId)) {
+    private boolean restartAfterCredentialUpdateLocked(Long accountId) {
+        try {
+            log.info("凭证已更新，开始重新校验并重建WebSocket连接: accountId={}", accountId);
+
+            if (!isAccountConnectableAfterCredentialUpdate(accountId)) {
                 log.info("凭证已更新但账号未启用，不执行重连: accountId={}", accountId);
                 return false;
             }
 
             // 清除旧凭证状态，确保新Cookie立即参与Token获取和连接建立
-            tokenService.clearCaptchaWait(accountId);
+            tokenService.clearAccountRuntimeState(accountId);
             stopWebSocket(accountId);
             tokenService.clearToken(accountId);
 
-            boolean success = startWebSocket(accountId);
+            // status=-2 is allowed only for this one recovery attempt. Account
+            // status returns to normal only after WebSocket initialization.
+            boolean success = startWebSocket(accountId, true);
             if (!success) {
-                scheduleReconnect(accountId, config.getReconnectDelay(), false);
+                if (!tokenService.isCaptchaPending(accountId)) {
+                    scheduleReconnect(accountId, config.getReconnectDelay(), false);
+                }
             } else {
                 AtomicInteger attemptCount = reconnectAttemptCounts.get(accountId);
                 if (attemptCount != null) {
@@ -485,6 +512,41 @@ public class WebSocketServiceImpl implements WebSocketService {
             log.error("凭证更新后重建WebSocket连接失败: accountId={}", accountId, e);
             scheduleReconnect(accountId, config.getReconnectDelay(), false);
             return false;
+        }
+    }
+
+    private boolean isVerificationRecoveryCandidate(Long accountId) {
+        if (accountId == null) return false;
+        try {
+            XianyuAccount account = xianyuAccountMapper.selectById(accountId);
+            return account != null && Integer.valueOf(-2).equals(account.getStatus());
+        } catch (Exception exception) {
+            log.warn("读取账号验证恢复状态失败: accountId={}, reason={}", accountId, exception.getMessage());
+            return false;
+        }
+    }
+
+    private boolean isAccountConnectableAfterCredentialUpdate(Long accountId) {
+        if (accountId == null) return false;
+        try {
+            XianyuAccount account = xianyuAccountMapper.selectById(accountId);
+            return account != null && !Integer.valueOf(0).equals(account.getStatus());
+        } catch (Exception exception) {
+            log.warn("读取账号凭证恢复状态失败: accountId={}, reason={}", accountId, exception.getMessage());
+            return false;
+        }
+    }
+
+    private void markAccountConnected(Long accountId) {
+        try {
+            XianyuAccount account = xianyuAccountMapper.selectById(accountId);
+            if (account != null && Integer.valueOf(-2).equals(account.getStatus())) {
+                account.setStatus(1);
+                xianyuAccountMapper.updateById(account);
+                log.info("【账号{}】WebSocket已连接，账号状态恢复为正常", accountId);
+            }
+        } catch (Exception exception) {
+            log.error("【账号{}】WebSocket连接后恢复账号状态失败", accountId, exception);
         }
     }
 

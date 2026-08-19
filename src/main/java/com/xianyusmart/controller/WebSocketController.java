@@ -478,12 +478,10 @@ public class WebSocketController {
                 return ResultObject.failed("账号ID不能为空");
             }
             
-            // 调用tokenService清除等待状态
-            com.xianyusmart.service.WebSocketTokenService tokenService = 
-                    applicationContext.getBean(com.xianyusmart.service.WebSocketTokenService.class);
-            tokenService.clearCaptchaWait(reqDTO.getXianyuAccountId());
-            
-            return ResultObject.success("验证等待状态已清除，可以重新请求");
+            // Clearing this state without a new Cookie causes the next request
+            // to replay the same risk-controlled session. Credential update
+            // endpoints clear it only after persisting a new Cookie.
+            return ResultObject.failed("请先完成安全验证并扫码更新 Cookie，不能单独清除验证状态");
             
         } catch (Exception e) {
             log.error("清除验证等待状态失败", e);
@@ -501,24 +499,15 @@ public class WebSocketController {
             return ResultObject.failed("账号ID不能为空");
         }
         Long accountId = reqDTO.getXianyuAccountId();
-        webSocketTokenService.clearCaptchaWait(accountId);
-        boolean connected = webSocketService.restartAfterCredentialUpdate(accountId);
+        boolean connected = false;
 
         CaptchaVerificationRespDTO result = new CaptchaVerificationRespDTO();
         result.setConnected(connected);
         result.setNeedCaptcha(webSocketTokenService.isCaptchaPending(accountId));
         result.setCaptchaUrl(webSocketTokenService.getCaptchaUrl(accountId));
-        result.setMessage(connected
-                ? "安全验证已生效，WebSocket Token已刷新并恢复连接"
-                : Boolean.TRUE.equals(result.getNeedCaptcha())
-                    ? "平台仍要求安全验证，请确认已在正确账号中完成滑块"
-                    : "验证结果尚未生效，请稍后再次检测");
+        result.setMessage("网页验证不会自动把浏览器 Cookie 传回服务器，请使用同一闲鱼账号扫码更新 Cookie；更新后系统才会重新获取 Token 并恢复连接");
 
-        if (connected) {
-            return ResultObject.success(result);
-        }
-        return new ResultObject<>(Boolean.TRUE.equals(result.getNeedCaptcha()) ? 1001 : 1,
-                result.getMessage(), result);
+        return new ResultObject<>(1001, result.getMessage(), result);
     }
 
     /**
@@ -630,11 +619,6 @@ public class WebSocketController {
             }
 
             boolean accountDisabled = Integer.valueOf(0).equals(account.getStatus());
-            if (Integer.valueOf(-2).equals(account.getStatus())) {
-                account.setStatus(1);
-                accountMapper.updateById(account);
-            }
-
             // Cookie保存成功后立即清理旧凭证状态并重建连接
             boolean connected = !accountDisabled
                     && webSocketService.restartAfterCredentialUpdate(reqDTO.getXianyuAccountId());
