@@ -497,6 +497,14 @@ public class SystemUpdateService {
     private void applyBundledReleaseNotes(SystemUpdateStatusRespDTO status) {
         if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) return;
         String version = normalizeVersion(status.getLatestVersion());
+        if ("2.3.6".equals(version)) {
+            status.setUpdateHighlights(List.of(
+                    "修复安全验证后的Cookie、H5 Token、WebSocket Token与实时连接恢复流程",
+                    "账号仅在WebSocket初始化成功后恢复正常，验证未通过时暂停自动重连",
+                    "订单详情Token过期时自动刷新并重试，降低自动发货中断概率"
+            ));
+            return;
+        }
         if ("2.3.5".equals(version)) {
             status.setUpdateHighlights(List.of(
                     "重构卡券库发货流程，图片配置提升到流程第一步并提供实时预览",
