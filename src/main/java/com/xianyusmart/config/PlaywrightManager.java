@@ -8,6 +8,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -24,6 +25,13 @@ public class PlaywrightManager {
     private volatile Browser browser;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile boolean initialized = false;
+
+    @Value("${app.captcha.browser-headless:true}")
+    private boolean browserHeadless;
+
+    private static final String BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 
     private static final String BROWSER_CACHE_DIR;
 
@@ -66,7 +74,7 @@ public class PlaywrightManager {
         try {
             ensureBrowserReady();
             Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .setUserAgent(BROWSER_USER_AGENT)
                     .setLocale("zh-CN");
             return browser.newContext(contextOptions);
         } catch (Exception e) {
@@ -74,7 +82,7 @@ public class PlaywrightManager {
             try {
                 rebuild();
                 Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .setUserAgent(BROWSER_USER_AGENT)
                         .setLocale("zh-CN");
                 return browser.newContext(contextOptions);
             } catch (Exception ex) {
@@ -104,7 +112,7 @@ public class PlaywrightManager {
             }
             this.playwright = Playwright.create();
             BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                    .setHeadless(true);
+                    .setHeadless(browserHeadless);
             this.browser = this.playwright.chromium().launch(launchOptions);
             this.initialized = true;
             log.info("Playwright浏览器初始化成功");

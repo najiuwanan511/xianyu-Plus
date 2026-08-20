@@ -17,13 +17,18 @@ import com.xianyusmart.service.CookieRefreshService;
 import com.xianyusmart.service.OperationLogService;
 import com.xianyusmart.utils.SessionCookieJar;
 import com.xianyusmart.utils.XianyuSignUtils;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Cookie刷新服务实现
@@ -66,9 +71,39 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
 
     private static final long BROWSER_REFRESH_COOLDOWN_MS = 30 * 60 * 1000L;
+    private static final long CAPTCHA_POLL_INTERVAL_MS = 250L;
+    private static final String CAPTCHA_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+    private static final List<String> CAPTCHA_COOKIE_URLS = List.of(
+            GOOFISH_IM_URL,
+            "https://h5api.m.goofish.com",
+            "https://passport.goofish.com",
+            "https://www.taobao.com"
+    );
+
+    @Value("${app.captcha.enabled:true}")
+    private boolean captchaBrowserEnabled = true;
+
+    @Value("${app.captcha.browser-headless:true}")
+    private boolean captchaBrowserHeadless = true;
+
+    @Value("${app.captcha.timeout-seconds:120}")
+    private int captchaTimeoutSeconds = 120;
+
+    @Value("${app.captcha.max-concurrent:1}")
+    private int captchaMaxConcurrent = 1;
+
     private final Map<Long, Long> lastBrowserRefreshTime = new ConcurrentHashMap<>();
+    private final Map<Long, ReentrantLock> captchaLocks = new ConcurrentHashMap<>();
+    private volatile Semaphore captchaSlots = new Semaphore(1);
 
     public CookieRefreshServiceImpl() {
+    }
+
+    @PostConstruct
+    void initializeCaptchaSlots() {
+        captchaSlots = new Semaphore(Math.max(1, captchaMaxConcurrent));
     }
 
 
@@ -158,7 +193,7 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
             Request request = new Request.Builder()
                     .url(HAS_LOGIN_URL)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("User-Agent", CAPTCHA_USER_AGENT)
                     .header("Accept", "application/json, text/plain, */*")
                     .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                     .header("Referer", "https://passport.goofish.com/")
@@ -395,6 +430,133 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                 return false;
             }
         });
+    }
+
+    @Override
+    public boolean completeCaptcha(Long accountId, String verificationUrl) {
+        if (!captchaBrowserEnabled || captchaBrowserHeadless || accountId == null || verificationUrl == null
+                || verificationUrl.isBlank()) {
+            if (captchaBrowserHeadless && accountId != null) {
+                log.info("【账号{}】当前为无头浏览器，跳过人工滑块并保留验证状态", accountId);
+            }
+            return false;
+        }
+
+        ReentrantLock accountLock = captchaLocks.computeIfAbsent(accountId, ignored -> new ReentrantLock());
+        if (!accountLock.tryLock()) {
+            log.info("【账号{}】已有安全验证任务运行，跳过重复验证", accountId);
+            return false;
+        }
+
+        boolean slotAcquired = false;
+        try {
+            slotAcquired = captchaSlots.tryAcquire(1, TimeUnit.SECONDS);
+            if (!slotAcquired) {
+                log.info("【账号{}】安全验证浏览器达到并发上限，等待下次重试", accountId);
+                return false;
+            }
+
+            XianyuCookie cookie = cookieMapper.selectOne(
+                    new LambdaQueryWrapper<XianyuCookie>()
+                            .eq(XianyuCookie::getXianyuAccountId, accountId)
+                            .orderByDesc(XianyuCookie::getCreatedTime)
+                            .last("LIMIT 1"));
+            if (cookie == null || cookie.getCookieText() == null || cookie.getCookieText().isBlank()) {
+                log.warn("【账号{}】安全验证失败：没有可用 Cookie", accountId);
+                return false;
+            }
+
+            Map<String, String> originalCookies = XianyuSignUtils.parseCookies(cookie.getCookieText());
+            String previousX5Sec = findCookieIgnoreCase(originalCookies, "x5sec");
+
+            try (BrowserContext context = playwrightManager.createContext()) {
+                context.addCookies(buildBrowserCookies(originalCookies));
+                Page page = context.newPage();
+                try {
+                    page.navigate(verificationUrl,
+                            new Page.NavigateOptions()
+                                    .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
+                                    .setTimeout(TimeUnit.SECONDS.toMillis(Math.max(10, captchaTimeoutSeconds))));
+                } catch (Exception navigateError) {
+                    // 验证页经常在滑块完成后主动终止导航；仍继续轮询浏览器 Cookie。
+                    log.debug("【账号{}】安全验证页面导航未正常结束，继续等待 Cookie: {}",
+                            accountId, navigateError.getMessage());
+                }
+
+                long deadline = System.currentTimeMillis()
+                        + TimeUnit.SECONDS.toMillis(Math.max(10, captchaTimeoutSeconds));
+                while (System.currentTimeMillis() < deadline) {
+                    Map<String, String> browserCookies = readBrowserCookies(context);
+                    String currentX5Sec = findCookieIgnoreCase(browserCookies, "x5sec");
+                    if (currentX5Sec != null && !currentX5Sec.isBlank()
+                            && !currentX5Sec.equals(previousX5Sec)) {
+                        Map<String, String> mergedCookies = new LinkedHashMap<>(originalCookies);
+                        browserCookies.forEach((name, value) -> {
+                            if (name.toLowerCase(Locale.ROOT).startsWith("x5")) {
+                                mergedCookies.put(name, value);
+                            }
+                        });
+                        removeCaptchaChallengeCookies(mergedCookies);
+                        persistCaptchaCookies(accountId, mergedCookies);
+                        log.info("【账号{}】安全验证完成，已回收新的 x5sec Cookie", accountId);
+                        return true;
+                    }
+                    Thread.sleep(CAPTCHA_POLL_INTERVAL_MS);
+                }
+            }
+
+            log.warn("【账号{}】安全验证超时，未检测到新的 x5sec Cookie", accountId);
+            return false;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            log.warn("【账号{}】安全验证被中断", accountId);
+            return false;
+        } catch (Exception exception) {
+            log.warn("【账号{}】安全验证浏览器执行失败: {}", accountId, exception.getMessage());
+            return false;
+        } finally {
+            if (slotAcquired) {
+                captchaSlots.release();
+            }
+            accountLock.unlock();
+            captchaLocks.remove(accountId, accountLock);
+        }
+    }
+
+    private Map<String, String> readBrowserCookies(BrowserContext context) {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (Cookie browserCookie : context.cookies(CAPTCHA_COOKIE_URLS)) {
+            if (browserCookie.name != null && browserCookie.value != null
+                    && !browserCookie.name.isBlank() && !browserCookie.value.isBlank()) {
+                result.put(browserCookie.name, browserCookie.value);
+            }
+        }
+        return result;
+    }
+
+    private void persistCaptchaCookies(Long accountId, Map<String, String> cookies) {
+        String cookieText = clearDuplicateCookies(XianyuSignUtils.formatCookies(cookies));
+        String mh5tk = findCookieIgnoreCase(cookies, "_m_h5_tk");
+        cookieMapper.update(null,
+                new LambdaUpdateWrapper<XianyuCookie>()
+                        .eq(XianyuCookie::getXianyuAccountId, accountId)
+                        .set(XianyuCookie::getCookieText, cookieText)
+                        .set(XianyuCookie::getCookieStatus, 1)
+                        .set(mh5tk != null && !mh5tk.isBlank(), XianyuCookie::getMH5Tk, mh5tk));
+    }
+
+    static void removeCaptchaChallengeCookies(Map<String, String> cookies) {
+        Set<String> staleNames = Set.of("x5secdata", "x5sectag", "x5step");
+        cookies.keySet().removeIf(name -> staleNames.contains(name.toLowerCase(Locale.ROOT)));
+    }
+
+    static String findCookieIgnoreCase(Map<String, String> cookies, String name) {
+        for (Map.Entry<String, String> entry : cookies.entrySet()) {
+            if (name.equalsIgnoreCase(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     private boolean refreshCookieWithBrowser(Long accountId) {

@@ -374,6 +374,16 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                         if (dataMap != null && dataMap.containsKey("url")) {
                             String captchaUrl = (String) dataMap.get("url");
 
+                            // 仅首次风控响应自动尝试该账号自己的浏览器 Context。
+                            // 验证成功后回写 x5sec，并在同一账号锁内重新取 Token；
+                            // 再次失败则进入人工等待，避免验证失败时形成请求风暴。
+                            if (retryCount == 0 && cookieRefreshService.completeCaptcha(accountId, captchaUrl)) {
+                                log.info("【账号{}】浏览器安全验证已完成，清除旧 Token 后重试", accountId);
+                                clearCaptchaWait(accountId);
+                                clearToken(accountId);
+                                return getAccessTokenWithRetry(accountId, retryCount + 1);
+                            }
+
                             rememberCaptchaRequirement(accountId, captchaUrl, "获取WebSocket Token时平台要求安全验证");
                             throw new CaptchaRequiredException(getCaptchaUrl(accountId));
                         } else {

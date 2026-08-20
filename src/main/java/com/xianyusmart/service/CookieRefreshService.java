@@ -34,6 +34,16 @@ public interface CookieRefreshService {
      * @return 是否刷新成功
      */
     boolean refreshCookie(Long accountId);
+
+    /**
+     * 在该账号独立的浏览器 Context 中完成平台安全验证，并回写新的 x5sec Cookie。
+     * 验证成功后由调用方清理 Token 缓存并重新获取 Token。
+     *
+     * @param accountId 账号 ID
+     * @param verificationUrl 平台返回的最新验证地址
+     * @return 是否拿到新的 x5sec 凭证
+     */
+    boolean completeCaptcha(Long accountId, String verificationUrl);
     
     /**
      * 清理重复Cookie

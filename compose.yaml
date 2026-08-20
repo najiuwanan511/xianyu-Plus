@@ -57,6 +57,11 @@ services:
       UPDATE_RELEASE_API: ${UPDATE_RELEASE_API:-https://api.github.com/repos/najiuwanan511/xianyu-Plus/releases/latest}
       UPDATE_REQUEST_DIR: /app/update
       UPDATE_CHECK_CACHE_MINUTES: ${UPDATE_CHECK_CACHE_MINUTES:-60}
+      CAPTCHA_BROWSER_ENABLED: ${CAPTCHA_BROWSER_ENABLED:-true}
+      # 容器无显示器，验证失败时通过手动 Cookie 更新兜底；桌面部署请设为 false。
+      CAPTCHA_BROWSER_HEADLESS: ${CAPTCHA_BROWSER_HEADLESS:-true}
+      CAPTCHA_BROWSER_TIMEOUT_SECONDS: ${CAPTCHA_BROWSER_TIMEOUT_SECONDS:-120}
+      CAPTCHA_BROWSER_MAX_CONCURRENT: ${CAPTCHA_BROWSER_MAX_CONCURRENT:-1}
     ports:
       - "12400:12400"
     logging:

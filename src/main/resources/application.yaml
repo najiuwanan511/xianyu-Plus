@@ -37,6 +37,12 @@ app:
   security:
     allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173,http://localhost:12400}
     trust-proxy: ${TRUST_PROXY:false}
+  captcha:
+    # 验证浏览器按账号创建独立 Context；桌面部署可设为 false 进行人工滑块验证。
+    browser-headless: ${CAPTCHA_BROWSER_HEADLESS:false}
+    enabled: ${CAPTCHA_BROWSER_ENABLED:true}
+    timeout-seconds: ${CAPTCHA_BROWSER_TIMEOUT_SECONDS:120}
+    max-concurrent: ${CAPTCHA_BROWSER_MAX_CONCURRENT:1}
 
 # AI功能开关（默认开启，API Key从数据库xianyu_sys_setting表读取，未配置时AI功能自动降级）
 ai:

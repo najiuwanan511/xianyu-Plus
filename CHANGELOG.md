@@ -1,3 +1,13 @@
+## V2.3.7（2026-08-20）
+
+### 多账号安全验证闭环
+
+- 为每个账号创建独立的 Playwright BrowserContext，避免多个账号共用 Cookie、设备状态或验证上下文。
+- Token 接口返回 `FAIL_SYS_USER_VALIDATE` 时，在桌面模式自动打开该账号的验证页面并等待新的 `x5sec` Cookie。
+- 验证成功后清理旧的 `x5secdata`、`x5sectag`、`x5step` 挑战标记，回写 Cookie、清理 Token 缓存并重试一次。
+- 增加验证浏览器启用、无头模式、超时和全局并发配置；无头容器继续保留手动 Cookie 更新兜底。
+- 统一扫码、登录态刷新和 Playwright 的浏览器 User-Agent，减少跨请求指纹不一致造成的误判。
+
 ## V2.3.6（2026-08-19）
 
 ### 安全验证与实时连接恢复修复
