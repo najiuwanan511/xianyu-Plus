@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { generateQRCode, getQRCodeStatus, getQRCodeCookies } from '@/api/qrlogin'
-import { updateCookie } from '@/api/websocket'
 import { showSuccess, showError } from '@/utils'
 import type { QRLoginSession } from '@/types'
 
@@ -174,20 +173,9 @@ const handleLoginSuccess = async () => {
       return
     }
 
-    // 3. 更新Cookie
-    const cookieUpdateRes = await updateCookie({
-      xianyuAccountId: props.accountId,
-      cookieText: cookieText
-    })
-
-    if (cookieUpdateRes.code !== 0 && cookieUpdateRes.code !== 200) {
-      showError(cookieUpdateRes.msg || '更新Cookie失败')
-      handleClose()
-      return
-    }
-
-    // 4. 后端已使用最新Cookie完成连接刷新
-    showSuccess(cookieUpdateRes.data?.message || 'Cookie更新成功，连接已刷新')
+    // 二维码确认时后端已经保存 Cookie，并启动该账号的凭证恢复流程。
+    // 这里不要再次调用 /websocket/updateCookie，否则会并发触发第二次重连。
+    showSuccess('扫码成功，Cookie 已保存，连接正在后台恢复')
 
     emit('success')
     handleClose()

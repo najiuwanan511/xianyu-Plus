@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { generateQRCode, getQRCodeStatus, getQRCodeCookies } from '@/api/qrlogin'
-import { addAccount } from '@/api/account'
 import { showSuccess, showError } from '@/utils'
 import type { QRLoginSession } from '@/types'
 
@@ -170,31 +169,15 @@ const handleLoginSuccess = async () => {
       return
     }
 
-    // 2. 直接使用返回的Cookie字符串和UNB
-    const cookieText = cookieRes.data?.cookies || ''
-    const unb = cookieRes.data?.unb || ''
-
-    if (!cookieText) {
+    // 后端在二维码确认时已经保存账号和 Cookie；这里只校验会话确实返回了凭证。
+    if (!cookieRes.data?.cookies) {
       showError('Cookie为空，请重试')
       handleClose()
       return
     }
 
-    // 3. 添加账号
-    const accountNote = `账号_${unb || Date.now()}`
-    const addRes = await addAccount({
-      accountNote,
-      unb,
-      cookie: cookieText
-    } as any)
-
-    // 4. 处理结果
-    if (addRes.code === 0 || addRes.code === 200) {
-      showSuccess('账号添加成功')
-      emit('success')
-    } else {
-      showError(addRes.msg || '添加账号失败')
-    }
+    showSuccess('账号添加成功，连接正在后台恢复')
+    emit('success')
 
     // 5. 关闭弹窗（无论成功失败都关闭）
     handleClose()
