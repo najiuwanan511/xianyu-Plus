@@ -97,4 +97,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 
 # 启动命令。远程验证模式为容器内 Chromium 提供 Xvfb + noVNC，
 # 用户可在飞牛浏览器中打开 7900 端口完成滑块，Cookie 始终留在服务端 Context。
+# 入口脚本会优先使用 UPDATE_JAR_PATH:-/app/update/app.jar，支持宿主机在线更新代理。
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
