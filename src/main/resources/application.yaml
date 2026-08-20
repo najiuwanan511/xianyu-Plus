@@ -43,6 +43,9 @@ app:
     enabled: ${CAPTCHA_BROWSER_ENABLED:true}
     timeout-seconds: ${CAPTCHA_BROWSER_TIMEOUT_SECONDS:120}
     max-concurrent: ${CAPTCHA_BROWSER_MAX_CONCURRENT:1}
+    remote-enabled: ${CAPTCHA_BROWSER_REMOTE_ENABLED:false}
+    remote-port: ${CAPTCHA_BROWSER_REMOTE_PORT:7900}
+    remote-url: ${CAPTCHA_BROWSER_REMOTE_URL:}
 
 # AI功能开关（默认开启，API Key从数据库xianyu_sys_setting表读取，未配置时AI功能自动降级）
 ai:

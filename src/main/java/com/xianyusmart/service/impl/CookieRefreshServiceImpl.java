@@ -94,6 +94,12 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
     @Value("${app.captcha.max-concurrent:1}")
     private int captchaMaxConcurrent = 1;
 
+    @Value("${app.captcha.remote-enabled:false}")
+    private boolean captchaRemoteEnabled = false;
+
+    @Value("${app.captcha.remote-url:}")
+    private String captchaRemoteUrl = "";
+
     private final Map<Long, Long> lastBrowserRefreshTime = new ConcurrentHashMap<>();
     private final Map<Long, ReentrantLock> captchaLocks = new ConcurrentHashMap<>();
     private volatile Semaphore captchaSlots = new Semaphore(1);
@@ -434,12 +440,19 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
     @Override
     public boolean completeCaptcha(Long accountId, String verificationUrl) {
-        if (!captchaBrowserEnabled || captchaBrowserHeadless || accountId == null || verificationUrl == null
+        if (!captchaBrowserEnabled || (captchaBrowserHeadless && !captchaRemoteEnabled)
+                || accountId == null || verificationUrl == null
                 || verificationUrl.isBlank()) {
-            if (captchaBrowserHeadless && accountId != null) {
+            if (captchaBrowserHeadless && !captchaRemoteEnabled && accountId != null) {
                 log.info("【账号{}】当前为无头浏览器，跳过人工滑块并保留验证状态", accountId);
             }
             return false;
+        }
+
+        if (captchaRemoteEnabled) {
+            log.warn("【账号{}】远程验证浏览器已打开，请访问 {} 完成滑块；验证 Cookie 将留在该账号独立 Context",
+                    accountId, captchaRemoteUrl == null || captchaRemoteUrl.isBlank()
+                            ? "飞牛主机的 7900 端口 (/vnc.html?autoconnect=true&resize=scale)" : captchaRemoteUrl);
         }
 
         ReentrantLock accountLock = captchaLocks.computeIfAbsent(accountId, ignored -> new ReentrantLock());

@@ -37,6 +37,9 @@ interface ConnectionStatus {
   tokenRenewalNextRetryAt?: number
   captchaRequired?: boolean
   captchaUrl?: string
+  captchaRemoteEnabled?: boolean
+  captchaRemoteUrl?: string
+  captchaRemotePort?: number
   autoDeliveryOn?: boolean
   autoReplyOn?: boolean
 }

@@ -25,6 +25,9 @@ interface ConnectionStatus {
   tokenRenewalNextRetryAt?: number | string
   captchaRequired?: boolean
   captchaUrl?: string
+  captchaRemoteEnabled?: boolean
+  captchaRemoteUrl?: string
+  captchaRemotePort?: number
 }
 
 interface Props {
@@ -61,9 +64,18 @@ const repairActionLabel = computed(() => {
 })
 
 const repairHint = computed(() => {
-  if (verificationRequired.value) return '平台要求安全验证。系统会打开闲鱼IM，完成后返回本页即可继续扫码更新。'
+  if (verificationRequired.value && props.connectionStatus?.captchaRemoteEnabled) return '飞牛远程验证画面已启动，请打开 noVNC 页面完成滑块；验证通过后系统会自动回收凭证。'
+  if (verificationRequired.value) return '平台要求安全验证。完成验证后更新 Cookie，系统会自动恢复连接。'
   if (props.connectionStatus?.connected) return '当前连接正常；需要时点击一次，系统会自动检查Token并恢复连接。'
   return '系统会先自动刷新Token并重连；自动处理未完成时才引导扫码更新。'
+})
+
+const remoteBrowserUrl = computed(() => {
+  if (!props.connectionStatus?.captchaRemoteEnabled) return ''
+  if (props.connectionStatus.captchaRemoteUrl?.trim()) return props.connectionStatus.captchaRemoteUrl.trim()
+  if (typeof window === 'undefined') return ''
+  const port = props.connectionStatus.captchaRemotePort || 7900
+  return `${window.location.protocol}//${window.location.hostname}:${port}/vnc.html?autoconnect=true&resize=scale`
 })
 
 const getCookieStatusColor = (status?: number) => {
@@ -308,7 +320,9 @@ const toggleAdvancedActions = () => {
             <div class="verification-actions__copy">
               <strong>当前账号需要平台验证</strong>
               <p>账号：{{ accountName || '未设置备注' }} · UNB：{{ accountUnb || '--' }}</p>
-              <p>点击上方“继续验证并修复”，完成闲鱼IM验证后返回本页，系统会自动弹出扫码更新。</p>
+              <p v-if="connectionStatus?.captchaRemoteEnabled">请打开远程验证画面完成滑块；完成后保持页面打开，系统会自动恢复连接。</p>
+              <p v-else>完成平台验证后更新 Cookie，系统会自动恢复连接。</p>
+              <a v-if="remoteBrowserUrl" class="remote-browser-link" :href="remoteBrowserUrl" target="_blank" rel="noopener noreferrer">打开飞牛远程验证画面</a>
             </div>
           </div>
         </div>
@@ -697,6 +711,8 @@ const toggleAdvancedActions = () => {
 .verification-actions__copy { min-width: 0; flex: 1; }
 .verification-actions strong { display: block; font-size: 13px; }
 .verification-actions p { margin: 4px 0 0; font-size: 11px; line-height: 1.55; }
+.remote-browser-link { display: inline-block; margin-top: 8px; color: #007aff; font-size: 12px; font-weight: 600; text-decoration: none; }
+.remote-browser-link:hover { text-decoration: underline; }
 .verification-actions__buttons { display: flex; flex: 0 0 auto; gap: 8px; }
 .verification-actions__buttons .btn { min-width: 112px; padding: 9px 12px; font-size: 12px; flex: 0 0 auto; }
 .verification-actions__buttons .btn:disabled { cursor: not-allowed; opacity: .45; }

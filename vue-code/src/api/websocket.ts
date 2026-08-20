@@ -22,6 +22,9 @@ export interface WebSocketStatus {
   tokenRenewalNextRetryAt?: number;   // Token过期时间戳（毫秒）
   captchaRequired?: boolean;
   captchaUrl?: string;
+  captchaRemoteEnabled?: boolean;
+  captchaRemoteUrl?: string;
+  captchaRemotePort?: number;
   autoDeliveryOn?: boolean;   // 是否有商品开启了自动发货
   autoReplyOn?: boolean;      // 是否有商品开启了自动回复
 }
@@ -39,6 +42,9 @@ export function getConnectionStatus(accountId: number) {
 export interface StartConnectionResult {
   needCaptcha?: boolean;
   captchaUrl?: string;
+  remoteBrowserEnabled?: boolean;
+  remoteBrowserUrl?: string;
+  remoteBrowserPort?: number;
   message?: string;
 }
 

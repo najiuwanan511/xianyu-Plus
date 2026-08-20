@@ -10,6 +10,7 @@ import com.xianyusmart.service.ImageDimensionService;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -37,6 +38,15 @@ public class WebSocketController {
 
     @Autowired
     private com.xianyusmart.service.WebSocketTokenService webSocketTokenService;
+
+    @Value("${app.captcha.remote-enabled:false}")
+    private boolean captchaRemoteEnabled;
+
+    @Value("${app.captcha.remote-url:}")
+    private String captchaRemoteUrl;
+
+    @Value("${app.captcha.remote-port:7900}")
+    private int captchaRemotePort;
 
     @Autowired
     private com.xianyusmart.service.SentMessageSaveService sentMessageSaveService;
@@ -85,7 +95,12 @@ public class WebSocketController {
             CaptchaInfoDTO captchaInfo = new CaptchaInfoDTO();
             captchaInfo.setNeedCaptcha(true);
             captchaInfo.setCaptchaUrl(e.getCaptchaUrl());
-            captchaInfo.setMessage("闲鱼要求网页安全验证，系统已暂停该账号的自动刷新与重连。请点击“立即验证”，完成后关闭验证窗口，系统会自动检测并恢复连接。");
+            captchaInfo.setRemoteBrowserEnabled(captchaRemoteEnabled);
+            captchaInfo.setRemoteBrowserUrl(captchaRemoteUrl);
+            captchaInfo.setRemoteBrowserPort(captchaRemotePort);
+            captchaInfo.setMessage(captchaRemoteEnabled
+                    ? "飞牛远程验证画面已启动，请打开 noVNC 页面完成滑块；完成后保持页面打开，系统会自动回收新的 x5sec。"
+                    : "闲鱼要求网页安全验证，系统已暂停该账号的自动刷新与重连。请完成验证后更新 Cookie。");
             return new ResultObject<>(1001, "需要安全验证", captchaInfo);
             /*
             log.warn("⚠️ 需要滑块验证: accountId={}, url={}", reqDTO.getXianyuAccountId(), e.getCaptchaUrl());
@@ -418,6 +433,9 @@ public class WebSocketController {
             respDTO.setTokenRenewalNextRetryAt(renewalStatus.nextRetryAt());
             respDTO.setCaptchaRequired(webSocketTokenService.isCaptchaPending(reqDTO.getXianyuAccountId()));
             respDTO.setCaptchaUrl(webSocketTokenService.getCaptchaUrl(reqDTO.getXianyuAccountId()));
+            respDTO.setCaptchaRemoteEnabled(captchaRemoteEnabled);
+            respDTO.setCaptchaRemoteUrl(captchaRemoteUrl);
+            respDTO.setCaptchaRemotePort(captchaRemotePort);
 
             com.xianyusmart.mapper.XianyuGoodsConfigMapper goodsConfigMapper =
                     applicationContext.getBean(com.xianyusmart.mapper.XianyuGoodsConfigMapper.class);
@@ -505,7 +523,12 @@ public class WebSocketController {
         result.setConnected(connected);
         result.setNeedCaptcha(webSocketTokenService.isCaptchaPending(accountId));
         result.setCaptchaUrl(webSocketTokenService.getCaptchaUrl(accountId));
-        result.setMessage("网页验证不会自动把浏览器 Cookie 传回服务器，请使用同一闲鱼账号扫码更新 Cookie；更新后系统才会重新获取 Token 并恢复连接");
+        result.setCaptchaRemoteEnabled(captchaRemoteEnabled);
+        result.setCaptchaRemoteUrl(captchaRemoteUrl);
+        result.setCaptchaRemotePort(captchaRemotePort);
+        result.setMessage(captchaRemoteEnabled
+                ? "请打开飞牛 noVNC 远程验证画面完成滑块；验证通过后系统会自动回收 x5sec 并恢复连接。"
+                : "网页验证不会自动把浏览器 Cookie 传回服务器，请完成验证后更新 Cookie；更新后系统才会重新获取 Token 并恢复连接");
 
         return new ResultObject<>(1001, result.getMessage(), result);
     }
@@ -997,6 +1020,9 @@ public class WebSocketController {
         private Long tokenRenewalNextRetryAt;
         private Boolean captchaRequired;
         private String captchaUrl;
+        private Boolean captchaRemoteEnabled;
+        private String captchaRemoteUrl;
+        private Integer captchaRemotePort;
         private Boolean autoDeliveryOn; // 是否有商品开启了自动发货
         private Boolean autoReplyOn;     // 是否有商品开启了自动回复
     }
@@ -1008,6 +1034,9 @@ public class WebSocketController {
     public static class CaptchaInfoDTO {
         private Boolean needCaptcha;  // 是否需要验证
         private String captchaUrl;    // 验证链接
+        private Boolean remoteBrowserEnabled;
+        private String remoteBrowserUrl;
+        private Integer remoteBrowserPort;
         private String message;       // 提示信息
     }
 
@@ -1016,6 +1045,9 @@ public class WebSocketController {
         private Boolean connected;
         private Boolean needCaptcha;
         private String captchaUrl;
+        private Boolean captchaRemoteEnabled;
+        private String captchaRemoteUrl;
+        private Integer captchaRemotePort;
         private String message;
     }
     

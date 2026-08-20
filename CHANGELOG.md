@@ -1,3 +1,12 @@
+## V2.3.10（2026-08-20）
+
+### 飞牛 OS 无桌面安全验证
+
+- Docker 运行镜像内置 Xvfb、x11vnc 和 noVNC；飞牛 OS 无需安装桌面环境即可完成闲鱼安全滑块。
+- 启用 `CAPTCHA_BROWSER_REMOTE_ENABLED=true` 后，访问 `http://飞牛IP:7900/vnc.html?autoconnect=true&resize=scale` 操作验证。
+- noVNC 验证画面只连接服务端浏览器，Cookie 仍保存在对应账号的独立 BrowserContext 中，三个账号不会互相串号。
+- 增加远程验证启动检查和明确日志；支持自定义 noVNC 端口、绑定地址和 VNC 密码。
+
 ## V2.3.9（2026-08-20）
 
 ### 独立 JAR 验证浏览器兼容

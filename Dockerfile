@@ -67,7 +67,7 @@ RUN apt-get update \
         libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libfontconfig1 \
         libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 \
         libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
-        libxkbcommon0 libxrandr2 libxshmfence1 wget \
+        libxkbcommon0 libxrandr2 libxshmfence1 wget xvfb x11vnc novnc \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建低权限运行用户和数据目录
@@ -78,9 +78,11 @@ RUN groupadd --system xianyuplus && useradd --system --gid xianyuplus --home-dir
 # 从构建阶段复制 JAR
 COPY --from=backend-build --chown=xianyuplus:xianyuplus /app/target/xianyu-plus.jar app.jar
 COPY --from=backend-build --chown=xianyuplus:xianyuplus /ms-playwright /app/ms-playwright
+COPY --chown=xianyuplus:xianyuplus docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
 # 暴露端口
-EXPOSE 12400
+EXPOSE 12400 7900
 
 # 环境变量
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=20 -XX:+ExitOnOutOfMemoryError"
@@ -93,5 +95,6 @@ USER xianyuplus
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:12400/actuator/health || exit 1
 
-# 启动命令
-ENTRYPOINT ["sh", "-c", "RUNTIME_JAR=${UPDATE_JAR_PATH:-/app/update/app.jar}; if [ ! -r \"$RUNTIME_JAR\" ]; then RUNTIME_JAR=/app/app.jar; fi; exec java ${JAVA_OPTS} -Dserver.port=${SERVER_PORT} -jar \"$RUNTIME_JAR\""]
+# 启动命令。远程验证模式为容器内 Chromium 提供 Xvfb + noVNC，
+# 用户可在飞牛浏览器中打开 7900 端口完成滑块，Cookie 始终留在服务端 Context。
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

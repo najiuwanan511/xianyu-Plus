@@ -175,6 +175,17 @@ sudo ./deploy/self-update/install-online-update.sh
 独立 JAR 没有安装 Playwright Chromium 时会自动尝试系统 Chrome 和 Edge；
 `CAPTCHA_BROWSER_MAX_CONCURRENT` 控制同时处理的验证数量，默认一次一个账号。
 
+飞牛 OS 只使用 Docker 时，可开启容器内远程浏览器验证：
+
+```env
+CAPTCHA_BROWSER_REMOTE_ENABLED=true
+CAPTCHA_BROWSER_HEADLESS=true
+CAPTCHA_BROWSER_VNC_PASSWORD=请替换为自定义密码
+```
+
+然后执行 `docker compose up -d --build`，在同一局域网的浏览器访问
+`http://飞牛IP:7900/vnc.html?autoconnect=true&resize=scale`。打开账号验证弹窗后，在 noVNC 画面中完成滑块，保持页面打开片刻，系统会轮询新凭证并自动恢复 WebSocket。VNC 密码最多使用前 8 个字符；7900 端口建议只绑定局域网地址或通过反向代理保护，避免暴露到公网。
+
 请妥善保管 `.env`、Cookie、Token、卡密及供应商密钥，避免提交到 GitHub 或发送给他人。
 
 ## 常用运维命令

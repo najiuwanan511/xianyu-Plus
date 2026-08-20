@@ -29,6 +29,9 @@ public class PlaywrightManager {
     @Value("${app.captcha.browser-headless:true}")
     private boolean browserHeadless;
 
+    @Value("${app.captcha.remote-enabled:false}")
+    private boolean remoteBrowserEnabled;
+
     private static final String BROWSER_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -126,7 +129,7 @@ public class PlaywrightManager {
         RuntimeException lastFailure = null;
         for (String channel : BROWSER_CHANNEL_CANDIDATES) {
             BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                    .setHeadless(browserHeadless)
+                    .setHeadless(browserHeadless && !remoteBrowserEnabled)
                     .setTimeout(TimeUnit.SECONDS.toMillis(15));
             if (channel != null) {
                 launchOptions.setChannel(channel);
