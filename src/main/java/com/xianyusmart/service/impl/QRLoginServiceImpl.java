@@ -4,6 +4,7 @@ import com.xianyusmart.controller.dto.QRLoginResponse;
 import com.xianyusmart.controller.dto.QRLoginSession;
 import com.xianyusmart.controller.dto.QRStatusResponse;
 import com.xianyusmart.service.QRLoginService;
+import com.xianyusmart.service.WebSocketService;
 import com.xianyusmart.utils.CookieUtils;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -45,6 +46,9 @@ public class QRLoginServiceImpl implements QRLoginService {
     
     @Autowired
     private com.xianyusmart.service.AccountService accountService;
+
+    @Autowired(required = false)
+    private WebSocketService webSocketService;
 
     @Autowired
     @Qualifier("taskExecutor")
@@ -972,6 +976,18 @@ public class QRLoginServiceImpl implements QRLoginService {
                 log.info("   - Cookie字段数: {}", cookies.size());
                 log.info("   - m_h5_tk: {}", mH5Tk != null ? "已保存" : "未提供");
                 log.info("   - 账号备注: {}", accountNote);
+
+                // QR 登录也是一次凭证更新。若账号之前因风控处于 -2/待验证状态，
+                // 仅保存 Cookie 不会清理 Token 服务的内存验证状态，后续手动连接会被旧状态拦截。
+                // 复用统一恢复流程，清理旧状态并自动重建该账号的 WebSocket。
+                if (webSocketService != null) {
+                    boolean reconnected = webSocketService.restartAfterCredentialUpdate(accountId);
+                    if (reconnected) {
+                        log.info("【账号{}】扫码凭证已生效，WebSocket已自动恢复", accountId);
+                    } else {
+                        log.warn("【账号{}】扫码凭证已保存，但WebSocket暂未恢复，请稍后刷新连接状态", accountId);
+                    }
+                }
             } else {
                 log.error("❌ 保存Cookie失败：accountId为空");
                 session.setStatus("error");

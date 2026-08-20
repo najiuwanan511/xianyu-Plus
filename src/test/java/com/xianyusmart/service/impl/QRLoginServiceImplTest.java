@@ -2,13 +2,20 @@ package com.xianyusmart.service.impl;
 
 import com.google.gson.JsonObject;
 import com.xianyusmart.controller.dto.QRLoginSession;
+import com.xianyusmart.service.AccountService;
+import com.xianyusmart.service.WebSocketService;
 import okhttp3.HttpUrl;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class QRLoginServiceImplTest {
 
@@ -113,5 +120,33 @@ class QRLoginServiceImplTest {
         assertTrue(QRLoginServiceImpl.isTrustedVerificationHost("passport.goofish.com"));
         assertTrue(QRLoginServiceImpl.isTrustedVerificationHost("login.taobao.com"));
         assertTrue(!QRLoginServiceImpl.isTrustedVerificationHost("goofish.com.attacker.example"));
+    }
+
+    @Test
+    void qrLoginRestartsWebSocketAfterPersistingFreshCookie() {
+        QRLoginServiceImpl service = new QRLoginServiceImpl();
+        AccountService accountService = mock(AccountService.class);
+        WebSocketService webSocketService = mock(WebSocketService.class);
+        when(accountService.saveAccountAndCookie(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("22129504"),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("fresh_1")))
+                .thenReturn(7L);
+        when(webSocketService.restartAfterCredentialUpdate(7L)).thenReturn(true);
+
+        ReflectionTestUtils.setField(service, "accountService", accountService);
+        ReflectionTestUtils.setField(service, "webSocketService", webSocketService);
+
+        QRLoginSession session = new QRLoginSession("session-recovery");
+        session.setUnb("22129504");
+        LinkedHashMap<String, String> cookies = new LinkedHashMap<>();
+        cookies.put("unb", "22129504");
+        cookies.put("_m_h5_tk", "fresh_1");
+        session.getCookies().putAll(cookies);
+
+        ReflectionTestUtils.invokeMethod(service, "saveCookieToDatabase", session);
+
+        verify(webSocketService).restartAfterCredentialUpdate(7L);
     }
 }
