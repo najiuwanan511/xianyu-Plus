@@ -172,6 +172,7 @@ sudo ./deploy/self-update/install-online-update.sh
 当平台返回 `FAIL_SYS_USER_VALIDATE` 时，系统会为触发验证的账号创建独立浏览器 Context，
 完成滑块后只回写该账号的新 `x5sec` Cookie，不会与其他账号共享 Cookie 或设备状态。
 桌面部署可在 `.env` 中设置 `CAPTCHA_BROWSER_HEADLESS=false`，容器部署默认保持无头并使用手动 Cookie 更新兜底；
+独立 JAR 没有安装 Playwright Chromium 时会自动尝试系统 Chrome 和 Edge；
 `CAPTCHA_BROWSER_MAX_CONCURRENT` 控制同时处理的验证数量，默认一次一个账号。
 
 请妥善保管 `.env`、Cookie、Token、卡密及供应商密钥，避免提交到 GitHub 或发送给他人。

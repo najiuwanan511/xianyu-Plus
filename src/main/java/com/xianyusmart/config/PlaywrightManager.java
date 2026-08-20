@@ -32,6 +32,7 @@ public class PlaywrightManager {
     private static final String BROWSER_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+    private static final String[] BROWSER_CHANNEL_CANDIDATES = {null, "chrome", "msedge"};
 
     private static final String BROWSER_CACHE_DIR;
 
@@ -111,9 +112,7 @@ public class PlaywrightManager {
                 }
             }
             this.playwright = Playwright.create();
-            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                    .setHeadless(browserHeadless);
-            this.browser = this.playwright.chromium().launch(launchOptions);
+            this.browser = launchAvailableBrowser();
             this.initialized = true;
             log.info("Playwright浏览器初始化成功");
         } catch (Exception e) {
@@ -121,6 +120,32 @@ public class PlaywrightManager {
             this.initialized = false;
             throw new RuntimeException("Playwright浏览器初始化失败", e);
         }
+    }
+
+    private Browser launchAvailableBrowser() {
+        RuntimeException lastFailure = null;
+        for (String channel : BROWSER_CHANNEL_CANDIDATES) {
+            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
+                    .setHeadless(browserHeadless)
+                    .setTimeout(TimeUnit.SECONDS.toMillis(15));
+            if (channel != null) {
+                launchOptions.setChannel(channel);
+            }
+            try {
+                Browser launchedBrowser = playwright.chromium().launch(launchOptions);
+                log.info("Playwright使用{}启动浏览器", browserChannelName(channel));
+                return launchedBrowser;
+            } catch (RuntimeException exception) {
+                lastFailure = exception;
+                log.warn("Playwright无法使用{}启动浏览器，尝试下一个候选项: {}",
+                        browserChannelName(channel), exception.getMessage());
+            }
+        }
+        throw new RuntimeException("未找到可用的 Chromium、Chrome 或 Edge 浏览器", lastFailure);
+    }
+
+    static String browserChannelName(String channel) {
+        return channel == null ? "Playwright Chromium" : "系统 " + channel;
     }
 
     private void rebuild() {

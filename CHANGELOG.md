@@ -1,3 +1,11 @@
+## V2.3.9（2026-08-20）
+
+### 独立 JAR 验证浏览器兼容
+
+- 修复独立 JAR 部署没有额外安装 Playwright Chromium 时，安全验证浏览器直接报“Playwright浏览器不可用”的问题。
+- 浏览器启动依次尝试 Playwright Chromium、系统 Chrome 和系统 Edge；每个账号仍使用独立 BrowserContext，不共享 Cookie。
+- 为浏览器候选项增加启动超时和明确日志，便于定位缺少浏览器或显示环境的问题。
+
 ## V2.3.8（2026-08-20）
 
 ### 扫码登录后自动恢复连接
