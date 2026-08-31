@@ -31,7 +31,7 @@ public class AutoDeliveryConfigRespDTO {
     private String xyGoodsId;
     
     /**
-     * 发货模式：1-自动发货，2-卡密发货，3-自定义发货
+     * 发货模式：1-文本发货，2-卡密发货，4-Zero异步处理
      */
     private Integer deliveryMode;
 
@@ -60,6 +60,8 @@ public class AutoDeliveryConfigRespDTO {
      * 自动确认发货开关：0-关闭，1-开启
      */
     private Integer autoConfirmShipment;
+
+    private Integer zeroInputCount;
 
     /**
      * 发货后是否自动求小红花：0-关闭，1-开启

@@ -211,7 +211,10 @@ public class DeliveryTaskScheduler {
                 return;
             }
             XianyuGoodsOrder result = orderMapper.selectById(task.getId());
-            if (requiresManualReview(task, result)) {
+            if (result != null && result.getDeliveryStatus() != null
+                    && result.getDeliveryStatus().startsWith("ZERO_")) {
+                log.info("Zero 异步订单已转入独立状态机: taskId={}, status={}", task.getId(), result.getDeliveryStatus());
+            } else if (requiresManualReview(task, result)) {
                 deliveryTaskService.markReviewRequired(task.getId(), workerId, result != null ? result.getFailReason() : null);
             } else if (result != null && Integer.valueOf(1).equals(result.getState())) {
                 deliveryTaskService.complete(task.getId(), workerId);

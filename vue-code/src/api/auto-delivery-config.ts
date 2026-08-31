@@ -14,6 +14,7 @@ export interface AutoDeliveryConfig {
   kamiDeliveryTemplate?: string;
   autoDeliveryImageUrl?: string;
   autoConfirmShipment?: number;
+  zeroInputCount?: number;
   autoAskFlower?: number;
   autoAskFlowerText?: string;
   createTime: string;
@@ -32,6 +33,7 @@ export interface SaveAutoDeliveryConfigReq {
   kamiDeliveryTemplate?: string;
   autoDeliveryImageUrl?: string;
   autoConfirmShipment?: number;
+  zeroInputCount?: number;
   autoAskFlower?: number;
   autoAskFlowerText?: string;
 }

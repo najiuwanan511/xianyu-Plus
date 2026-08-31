@@ -69,6 +69,7 @@ public class AutoDeliveryConfigServiceImpl implements AutoDeliveryConfigService 
                 if (reqDTO.getAutoConfirmShipment() != null) {
                     config.setAutoConfirmShipment(reqDTO.getAutoConfirmShipment());
                 }
+                config.setZeroInputCount(normalizeZeroInputCount(reqDTO.getZeroInputCount()));
                 
                 autoDeliveryConfigMapper.updateById(config);
                 log.info("更新自动发货配置成功，ID: {}", config.getId());
@@ -219,7 +220,14 @@ public class AutoDeliveryConfigServiceImpl implements AutoDeliveryConfigService 
                 }
             }
         }
+        if (Integer.valueOf(4).equals(request.getDeliveryMode())) {
+            request.setZeroInputCount(normalizeZeroInputCount(request.getZeroInputCount()));
+        }
         return null;
+    }
+
+    private int normalizeZeroInputCount(Integer value) {
+        return Math.max(1, Math.min(value == null ? 1 : value, 100));
     }
 
     private String normalizeSkuId(String skuId) {

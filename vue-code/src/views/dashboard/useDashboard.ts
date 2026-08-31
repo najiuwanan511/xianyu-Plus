@@ -10,7 +10,7 @@ const isMerchantActionOrder = (order: DeliveryRecordVO) => {
   const delivery = String(order.deliveryStatus || '').toUpperCase()
   const terminal = ['COMPLETED', 'FINISHED', 'REFUNDED', 'CLOSED'].some(status => trade.includes(status))
   if (['FAILED', 'REVIEW_REQUIRED'].includes(delivery)) return true
-  if (['PENDING', 'PROCESSING', 'RETRY_WAIT'].includes(delivery)) return !terminal
+  if (['PENDING', 'PROCESSING', 'RETRY_WAIT', 'ZERO_WAITING_INPUT', 'ZERO_SUBMITTING', 'ZERO_SUBMIT_RETRY', 'ZERO_PROCESSING'].includes(delivery)) return !terminal
   if (String(order.deliveryChannel || '').toUpperCase() === 'PICKUP') {
     return !terminal
   }

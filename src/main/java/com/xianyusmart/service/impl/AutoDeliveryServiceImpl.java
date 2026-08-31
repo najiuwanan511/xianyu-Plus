@@ -13,6 +13,7 @@ import com.xianyusmart.service.AutoDeliveryService;
 import com.xianyusmart.service.EmailNotifyService;
 import com.xianyusmart.service.KamiConfigService;
 import com.xianyusmart.service.BuyerBlacklistService;
+import com.xianyusmart.service.ZeroBridgeService;
 import com.xianyusmart.service.DeliveryAttemptResult;
 import com.xianyusmart.service.OrderService;
 import com.xianyusmart.service.RedFlowerService;
@@ -119,6 +120,9 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
 
     @Autowired
     private BuyerBlacklistService blacklistService;
+
+    @Autowired
+    private ZeroBridgeService zeroBridgeService;
 
     @Autowired
     private XianyuAccountMapper accountMapper;
@@ -484,6 +488,9 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             }
 
             int deliveryMode = deliveryConfig.getDeliveryMode() == null ? 1 : deliveryConfig.getDeliveryMode();
+            if (deliveryMode == 4) {
+                return com.xianyusmart.common.ResultObject.failed("Zero 异步订单请等待买家提交内容，不能按普通发货方式补发");
+            }
             cardDelivery = deliveryMode == 2;
             String verifiedBuyerId = requireVerifiedBuyerRecipientId(record.getBuyerUserId(),
                     orderDetail == null ? null : orderDetail.buyerUserId);
@@ -658,6 +665,16 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             }
             String deliverySid = firstNonBlank(sId, verifiedBuyerId + "@goofish");
             String cid = deliverySid.replace("@goofish", "");
+            if (deliveryMode == 4) {
+                currentOrder.setBuyerUserId(verifiedBuyerId);
+                currentOrder.setBuyerUserName(firstNonBlank(
+                        orderDetail == null ? null : orderDetail.buyerUserName,
+                        buyerUserName, currentOrder.getBuyerUserName()));
+                currentOrder.setSid(deliverySid);
+                currentOrder.setSkuId(orderSkuId);
+                zeroBridgeService.initializeCollection(currentOrder, deliveryConfig, buyNum);
+                return;
+            }
             boolean wsConnected = webSocketService.isConnected(accountId);
 
             DeliveryContext ctx = DeliveryContext.builder()

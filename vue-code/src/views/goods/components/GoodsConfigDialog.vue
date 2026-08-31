@@ -59,6 +59,8 @@ interface SkuDeliveryRow {
 const skuRows = ref<SkuDeliveryRow[]>([])
 const form = reactive({
   deliveryEnabled: false,
+  deliveryMode: 2 as 2 | 4,
+  zeroInputCount: 1,
   kamiConfigId: '' as '' | number,
   autoConfirmShipment: false,
   aiEnabled: false,
@@ -201,6 +203,8 @@ const loadConfig = async () => {
   if (!props.modelValue || !props.item || !props.accountId) return
   loading.value = true
   form.deliveryEnabled = props.item.xianyuAutoDeliveryOn === 1
+  form.deliveryMode = 2
+  form.zeroInputCount = 1
   form.autoConfirmShipment = false
   form.aiEnabled = props.item.xianyuAutoReplyOn === 1
   form.keywordEnabled = props.item.xianyuKeywordReplyOn === 1
@@ -251,6 +255,8 @@ const loadConfig = async () => {
       : []
     const defaultConfig = deliveryConfigs.find((config) => config.skuId == null)
     form.autoConfirmShipment = defaultConfig?.autoConfirmShipment === 1
+    form.deliveryMode = defaultConfig?.deliveryMode === 4 ? 4 : 2
+    form.zeroInputCount = Math.max(1, Math.min(defaultConfig?.zeroInputCount || 1, 100))
 
     if (skuResponse.code === 0 || skuResponse.code === 200) {
       applySkuRows(skuResponse.data || [], deliveryConfigs)
@@ -287,6 +293,15 @@ const save = async () => {
       return
     }
   }
+  if (form.deliveryEnabled && form.deliveryMode === 2 && form.kamiConfigId === '') {
+    showError('卡密发货模式必须选择关联卡券')
+    return
+  }
+  if (form.deliveryEnabled && form.deliveryMode === 4
+      && (!Number.isInteger(form.zeroInputCount) || form.zeroInputCount < 1 || form.zeroInputCount > 100)) {
+    showError('每件需提交条数必须是 1 到 100 的整数')
+    return
+  }
   const listPrice = Number(props.item.item.soldPrice)
   if (form.bargainEnabled) {
     if (!form.bargainFloorPrice || form.bargainFloorPrice <= 0) {
@@ -314,7 +329,7 @@ const save = async () => {
       xianyuAutoDeliveryOn: form.deliveryEnabled ? 1 : 0,
       xianyuAutoReplyOn: form.aiEnabled ? 1 : 0,
       xianyuKeywordReplyOn: form.keywordEnabled ? 1 : 0,
-      kamiConfigId: form.deliveryEnabled && form.kamiConfigId !== '' ? Number(form.kamiConfigId) : undefined
+      kamiConfigId: form.deliveryEnabled && form.deliveryMode === 2 && form.kamiConfigId !== '' ? Number(form.kamiConfigId) : undefined
     })
     if (result.code !== 0 && result.code !== 200) throw new Error(result.msg || '保存商品配置失败')
 
@@ -327,7 +342,32 @@ const save = async () => {
       throw new Error(confirmResult.msg || '保存自动确认发货设置失败')
     }
 
-    if (skuRows.value.length > 0) {
+    if (form.deliveryEnabled && form.deliveryMode === 4) {
+      const zeroResult = await saveOrUpdateAutoDeliveryConfig({
+        xianyuAccountId: props.accountId,
+        xianyuGoodsId: props.item.item.id,
+        xyGoodsId: props.item.item.xyGoodId,
+        deliveryMode: 4,
+        autoDeliveryContent: '',
+        kamiConfigIds: '',
+        kamiDeliveryTemplate: '',
+        autoDeliveryImageUrl: '',
+        autoConfirmShipment: form.autoConfirmShipment ? 1 : 0,
+        zeroInputCount: form.zeroInputCount
+      })
+      if (zeroResult.code !== 0 && zeroResult.code !== 200) {
+        throw new Error(zeroResult.msg || '保存 Zero 转单规则失败')
+      }
+      for (const sku of skuRows.value) {
+        if (!sku.existingConfig) continue
+        const deleteResult = await deleteAutoDeliverySkuConfig(props.accountId, props.item.item.xyGoodId, sku.skuId)
+        if (deleteResult.code !== 0 && deleteResult.code !== 200) {
+          throw new Error(deleteResult.msg || `清理“${sku.displayName}”旧规格规则失败`)
+        }
+      }
+    }
+
+    if (form.deliveryEnabled && form.deliveryMode === 2 && skuRows.value.length > 0) {
       const preferenceResult = await updateGoodsSkuPreferences({
         xianyuAccountId: props.accountId,
         xyGoodsId: props.item.item.xyGoodId,
@@ -515,6 +555,13 @@ watch(() => [props.modelValue, props.item?.item.xyGoodId, props.accountId], load
                 </label>
               </div>
               <label v-if="form.deliveryEnabled" class="field">
+                <span>发货方式</span>
+                <select v-model.number="form.deliveryMode">
+                  <option :value="2">卡密 / 固定内容发货</option>
+                  <option :value="4">Zero 异步转单</option>
+                </select>
+              </label>
+              <label v-if="form.deliveryEnabled && form.deliveryMode === 2" class="field">
                 <span>{{ hasMultipleSkus ? '商品默认卡券' : '关联卡券' }}</span>
                 <select v-model="form.kamiConfigId">
                   <option value="">保留现有发货配置</option>
@@ -524,7 +571,16 @@ watch(() => [props.modelValue, props.item?.item.xyGoodId, props.accountId], load
                 </select>
               </label>
 
-              <div class="sku-mapping">
+              <div v-if="form.deliveryEnabled && form.deliveryMode === 4" class="sku-mapping__empty">
+                <strong>买家提交内容后交给 Zero 处理</strong>
+                <p>按“每件需提交条数 × 购买数量”收集消息；内容会原样逐条提交，并等待 Zero 完成或失败回调。</p>
+                <label class="field">
+                  <span>每件需提交条数</span>
+                  <input v-model.number="form.zeroInputCount" type="number" min="1" max="100" step="1" />
+                </label>
+              </div>
+
+              <div v-if="form.deliveryMode === 2" class="sku-mapping">
                 <div class="sku-mapping__heading">
                   <div>
                     <strong>按规格指定卡密</strong>

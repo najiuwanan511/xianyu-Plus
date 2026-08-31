@@ -113,6 +113,9 @@ const orderState = (order: DeliveryRecordVO) => {
   if (deliveryStatus === 'REVIEW_REQUIRED') return { text: '待人工核对', tone: 'warning' }
   if (deliveryStatus === 'FAILED' || order.state === -1) return { text: '发货异常', tone: 'danger' }
   if (deliveryStatus === 'PROCESSING' || deliveryStatus === 'RETRY_WAIT') return { text: '发货处理中', tone: 'warning' }
+  if (deliveryStatus === 'ZERO_WAITING_INPUT') return { text: '等待买家提交', tone: 'warning' }
+  if (deliveryStatus === 'ZERO_SUBMITTING' || deliveryStatus === 'ZERO_SUBMIT_RETRY') return { text: '提交 Zero 中', tone: 'warning' }
+  if (deliveryStatus === 'ZERO_PROCESSING') return { text: 'Zero 处理中', tone: 'warning' }
   return { text: '待发货', tone: 'warning' }
 }
 

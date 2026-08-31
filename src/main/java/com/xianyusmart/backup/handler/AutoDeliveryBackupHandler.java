@@ -52,6 +52,7 @@ public class AutoDeliveryBackupHandler implements DataBackupHandler {
             map.put("kamiDeliveryTemplate", config.getKamiDeliveryTemplate());
             map.put("autoDeliveryImageUrl", config.getAutoDeliveryImageUrl());
             map.put("autoConfirmShipment", config.getAutoConfirmShipment());
+            map.put("zeroInputCount", config.getZeroInputCount());
             result.add(map);
         }
 
@@ -106,6 +107,7 @@ public class AutoDeliveryBackupHandler implements DataBackupHandler {
                 config.setKamiDeliveryTemplate((String) map.get("kamiDeliveryTemplate"));
                 config.setAutoDeliveryImageUrl((String) map.get("autoDeliveryImageUrl"));
                 config.setAutoConfirmShipment(map.get("autoConfirmShipment") != null ? ((Number) map.get("autoConfirmShipment")).intValue() : null);
+                config.setZeroInputCount(map.get("zeroInputCount") != null ? ((Number) map.get("zeroInputCount")).intValue() : 1);
 
                 if (existing == null) {
                     autoDeliveryConfigMapper.insert(config);

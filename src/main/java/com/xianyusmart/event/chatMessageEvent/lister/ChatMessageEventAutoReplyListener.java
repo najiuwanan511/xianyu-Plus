@@ -6,6 +6,7 @@ import com.xianyusmart.service.AccountService;
 import com.xianyusmart.service.AutoReplyDelayService;
 import com.xianyusmart.service.AutoReplyService;
 import com.xianyusmart.service.BuyerBlacklistService;
+import com.xianyusmart.service.ZeroBridgeService;
 import com.xianyusmart.service.reply.HumanTakeoverManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,6 +56,9 @@ public class ChatMessageEventAutoReplyListener {
 
     @Autowired
     private BuyerBlacklistService blacklistService;
+
+    @Autowired
+    private ZeroBridgeService zeroBridgeService;
     
     /**
      * 处理聊天消息接收事件 - 判断并触发自动回复
@@ -99,6 +103,12 @@ public class ChatMessageEventAutoReplyListener {
                 if (message.getSId() != null) {
                     autoReplyDelayService.cancelDelayTask(message.getXianyuAccountId(), message.getSId());
                 }
+                return;
+            }
+
+            if (zeroBridgeService.hasActiveSession(message.getXianyuAccountId(), message.getSId(), senderUserId)) {
+                log.info("【账号{}】消息属于 Zero 下单收集会话，跳过普通自动回复: pnmId={}",
+                        message.getXianyuAccountId(), message.getPnmId());
                 return;
             }
             

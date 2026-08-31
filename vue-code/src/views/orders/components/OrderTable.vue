@@ -173,6 +173,9 @@ const getStatusText = (state: number) => {
 
 const getDeliveryText = (state: number, deliveryStatus?: string) => {
   if (deliveryStatus === 'SKIPPED') return '非自动发货'
+  if (deliveryStatus === 'ZERO_WAITING_INPUT') return '等待买家提交'
+  if (deliveryStatus === 'ZERO_SUBMITTING' || deliveryStatus === 'ZERO_SUBMIT_RETRY') return '提交 Zero 中'
+  if (deliveryStatus === 'ZERO_PROCESSING') return 'Zero 处理中'
   if (state === 1) return '已发货'
   if (state === 0) return '待发货'
   return '失败'
@@ -344,6 +347,10 @@ const getDeliveryPresentation = (order: DeliveryRecordItem): StatusPresentation 
   if (status === 'SKIPPED') return { text: '未自动发货', tone: 'muted', reason }
   if (status === 'PROCESSING') return { text: '发货处理中', tone: 'warning' }
   if (status === 'RETRY_WAIT') return { text: '等待重试', tone: 'warning', reason }
+  if (status === 'ZERO_WAITING_INPUT') return { text: '等待买家提交', tone: 'warning' }
+  if (status === 'ZERO_SUBMITTING') return { text: '正在提交 Zero', tone: 'warning' }
+  if (status === 'ZERO_SUBMIT_RETRY') return { text: 'Zero 提交重试', tone: 'warning', reason }
+  if (status === 'ZERO_PROCESSING') return { text: 'Zero 处理中', tone: 'warning' }
   return { text: '等待发货', tone: 'warning' }
 }
 

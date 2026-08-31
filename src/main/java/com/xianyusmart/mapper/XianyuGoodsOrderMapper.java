@@ -98,7 +98,7 @@ public interface XianyuGoodsOrderMapper {
                      OR trade_status = 'REFUNDING'
                    )) AS merchant_action_order_count,
               (SELECT COUNT(*) FROM xianyu_goods_order
-                 WHERE delivery_status IN ('PENDING', 'PROCESSING', 'RETRY_WAIT')) AS pending_task_count,
+                 WHERE delivery_status IN ('PENDING', 'PROCESSING', 'RETRY_WAIT', 'ZERO_WAITING_INPUT', 'ZERO_SUBMITTING', 'ZERO_SUBMIT_RETRY', 'ZERO_PROCESSING')) AS pending_task_count,
               (SELECT COUNT(*) FROM xianyu_goods_order
                  WHERE delivery_status = 'REVIEW_REQUIRED') AS review_required_count,
               (SELECT COUNT(*) FROM xianyu_goods_order
@@ -303,6 +303,24 @@ public interface XianyuGoodsOrderMapper {
     int retryOrFailTask(@Param("id") Long id, @Param("status") String status,
                         @Param("nextRetryTime") java.time.LocalDateTime nextRetryTime,
                         @Param("errorMessage") String errorMessage, @Param("workerId") String workerId);
+
+    @Update("UPDATE xianyu_goods_order SET delivery_status = 'ZERO_WAITING_INPUT', state = 0, " +
+            "next_retry_time = NULL, lease_owner = NULL, lease_expire_time = NULL, " +
+            "last_error_code = NULL, last_error_message = NULL, fail_reason = NULL " +
+            "WHERE id = #{id} AND delivery_status = 'PROCESSING'")
+    int markZeroWaitingInput(@Param("id") Long id);
+
+    @Update("UPDATE xianyu_goods_order SET delivery_status = #{deliveryStatus}, state = #{state}, " +
+            "content = #{content}, fail_reason = #{failReason}, last_error_code = NULL, last_error_message = #{failReason}, " +
+            "next_retry_time = NULL, lease_owner = NULL, lease_expire_time = NULL WHERE id = #{id}")
+    int updateZeroResult(@Param("id") Long id, @Param("deliveryStatus") String deliveryStatus,
+                         @Param("state") int state, @Param("content") String content,
+                         @Param("failReason") String failReason);
+
+    @Update("UPDATE xianyu_goods_order SET delivery_status = #{status}, last_error_code = #{errorCode}, " +
+            "last_error_message = #{message} WHERE id = #{id} AND delivery_status LIKE 'ZERO_%'")
+    int updateZeroProgress(@Param("id") Long id, @Param("status") String status,
+                           @Param("errorCode") String errorCode, @Param("message") String message);
     @Update("UPDATE xianyu_goods_order SET state = 0, delivery_status = 'RETRY_WAIT', " +
             "next_retry_time = DATE_ADD(NOW(3), INTERVAL 5 MINUTE), lease_owner = NULL, lease_expire_time = NULL, " +
             "last_error_code = 'BUYER_VERIFICATION_PENDING', last_error_message = #{reason}, fail_reason = #{reason} " +

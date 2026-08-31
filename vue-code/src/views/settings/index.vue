@@ -12,6 +12,8 @@ import IconChat from '@/components/icons/IconChat.vue'
 import IconBackup from '@/components/icons/IconBackup.vue'
 import IconInfo from '@/components/icons/IconInfo.vue'
 import IconLog from '@/components/icons/IconLog.vue'
+import IconLink from '@/components/icons/IconLink.vue'
+import { testZeroBridge } from '@/api/zero-bridge'
 
 // 当前选中的菜单
 const activeMenu = ref('ai')
@@ -26,6 +28,19 @@ const sysPromptSaving = ref(false)
 const sysPromptLoaded = ref(false)
 const aiReplyDelaySeconds = ref(DEFAULT_AI_REPLY_DELAY_SECONDS)
 const aiReplyDelaySaving = ref(false)
+
+const ZERO_ENABLED_SETTING = 'zero_bridge_enabled'
+const ZERO_BASE_URL_SETTING = 'zero_bridge_base_url'
+const ZERO_TOKEN_SETTING = 'zero_bridge_api_token'
+const ZERO_CALLBACK_SECRET_SETTING = 'zero_bridge_callback_secret'
+const zeroEnabled = ref(false)
+const zeroBaseUrl = ref('http://host.docker.internal:19090')
+const zeroApiToken = ref('')
+const zeroCallbackSecret = ref('')
+const zeroSaving = ref(false)
+const zeroTesting = ref(false)
+const zeroLoaded = ref(false)
+const zeroCallbackUrl = `${window.location.origin}/api/integrations/zero/callback`
 
 // 相似度阈值
 // AI API Key 配置
@@ -191,6 +206,7 @@ const aiStatus = ref({
 const menuItems = [
   { key: 'ai', label: 'AI 服务配置', icon: markRaw(IconRobot) },
   { key: 'prompt', label: 'AI客服配置', icon: markRaw(IconChat) },
+  { key: 'zero', label: 'Zero 转单对接', icon: markRaw(IconLink) },
   { key: 'backup', label: '备份与恢复', icon: markRaw(IconBackup) },
   { key: 'logs', label: '日志清理', icon: markRaw(IconLog) },
   { key: 'about', label: '关于', icon: markRaw(IconInfo) }
@@ -237,6 +253,73 @@ function handleSettingsMenuSelect(key: string) {
   activeMenu.value = key
   if (key === 'backup') handleBackupMenuEnter()
   if (key === 'logs') loadLogRetention()
+  if (key === 'zero') loadZeroConfig()
+}
+
+async function loadZeroConfig() {
+  if (zeroLoaded.value) return
+  try {
+    const [enabled, baseUrl, token, secret] = await Promise.all([
+      getSetting({ settingKey: ZERO_ENABLED_SETTING }),
+      getSetting({ settingKey: ZERO_BASE_URL_SETTING }),
+      getSetting({ settingKey: ZERO_TOKEN_SETTING }),
+      getSetting({ settingKey: ZERO_CALLBACK_SECRET_SETTING })
+    ])
+    zeroEnabled.value = enabled.data?.settingValue === 'true'
+    zeroBaseUrl.value = baseUrl.data?.settingValue || 'http://host.docker.internal:19090'
+    zeroApiToken.value = token.data?.settingValue || ''
+    zeroCallbackSecret.value = secret.data?.settingValue || ''
+    zeroLoaded.value = true
+  } catch (error) {
+    console.error('读取 Zero 对接配置失败', error)
+    toast.error('读取 Zero 对接配置失败')
+  }
+}
+
+function randomSecret(length = 48) {
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function saveZeroConfig() {
+  if (!zeroBaseUrl.value.trim() || !zeroApiToken.value.trim() || !zeroCallbackSecret.value.trim()) {
+    toast.error('请填写 Zero 地址、API Token 和回调密钥')
+    return
+  }
+  if (zeroCallbackSecret.value.trim().length < 16) {
+    toast.error('回调密钥至少需要 16 个字符')
+    return
+  }
+  zeroSaving.value = true
+  try {
+    await Promise.all([
+      saveSetting({ settingKey: ZERO_ENABLED_SETTING, settingValue: String(zeroEnabled.value), settingDesc: '是否启用 Zero 异步转单' }),
+      saveSetting({ settingKey: ZERO_BASE_URL_SETTING, settingValue: zeroBaseUrl.value.trim().replace(/\/+$/, ''), settingDesc: 'Zero HTTP 服务地址' }),
+      saveSetting({ settingKey: ZERO_TOKEN_SETTING, settingValue: zeroApiToken.value.trim(), settingDesc: 'Zero 闲鱼接口 API Token' }),
+      saveSetting({ settingKey: ZERO_CALLBACK_SECRET_SETTING, settingValue: zeroCallbackSecret.value.trim(), settingDesc: 'Zero 回调 HMAC-SHA256 密钥' })
+    ])
+    toast.success('Zero 对接配置已保存并立即生效')
+  } catch (error) {
+    console.error('保存 Zero 对接配置失败', error)
+    toast.error('保存 Zero 对接配置失败')
+  } finally {
+    zeroSaving.value = false
+  }
+}
+
+async function testZeroConnection() {
+  zeroTesting.value = true
+  try {
+    const result = await testZeroBridge()
+    if (result.code === 0 || result.code === 200) toast.success('Zero 连接正常')
+    else toast.error(result.msg || 'Zero 连接失败')
+  } catch (error) {
+    console.error('测试 Zero 连接失败', error)
+    toast.error('Zero 连接失败，请先保存配置并确认 Zero 已启动')
+  } finally {
+    zeroTesting.value = false
+  }
 }
 
 onMounted(async () => {
@@ -853,6 +936,56 @@ function handleBackupMenuEnter() {
           </div>
         </div>
 
+      </div>
+
+      <div v-if="activeMenu === 'zero'" class="settings__panel">
+        <div class="settings__panel-title">Zero 转单对接</div>
+        <div class="settings__section settings__section--first">
+          <div class="settings__section-title">连接与安全</div>
+          <p class="settings__desc">买家付款后逐条收集内容，收齐后提交给 Zero；Zero 完成或失败时，再把最终结果准确回复给原订单买家。</p>
+          <div class="settings__form">
+            <label class="settings__checkbox-label">
+              <input v-model="zeroEnabled" type="checkbox" />
+              <span>启用 Zero 异步转单</span>
+            </label>
+            <div class="settings__field">
+              <label class="settings__label">Zero 服务地址</label>
+              <input v-model="zeroBaseUrl" class="settings__input" placeholder="http://host.docker.internal:19090" />
+              <p class="settings__hint">Docker 部署通常填写 http://host.docker.internal:Zero端口；同机直接运行可填写 http://127.0.0.1:端口。</p>
+            </div>
+            <div class="settings__field">
+              <label class="settings__label">API Token</label>
+              <input v-model="zeroApiToken" class="settings__input" type="password" autocomplete="new-password" placeholder="与 Zero 的闲鱼对接 Token 完全一致" />
+            </div>
+            <div class="settings__field">
+              <label class="settings__label">回调密钥</label>
+              <div class="settings__input-wrap">
+                <input v-model="zeroCallbackSecret" class="settings__input" type="password" autocomplete="new-password" placeholder="与 Zero 回调密钥完全一致" />
+                <button class="settings__eye-btn" type="button" @click="zeroCallbackSecret = randomSecret()">生成</button>
+              </div>
+            </div>
+            <div class="settings__field">
+              <label class="settings__label">填入 Zero 的回调地址</label>
+              <input :value="zeroCallbackUrl" class="settings__input" readonly />
+              <p class="settings__hint">若 Zero 与本系统不在同一网络，请换成 Zero 能访问的 HTTPS 公网地址；签名会阻止伪造回调。</p>
+            </div>
+            <div class="settings__actions">
+              <button class="settings__btn settings__btn--secondary" :disabled="zeroTesting" @click="testZeroConnection">
+                {{ zeroTesting ? '测试中…' : '测试连接' }}
+              </button>
+              <button class="settings__btn settings__btn--primary" :disabled="zeroSaving" @click="saveZeroConfig">
+                {{ zeroSaving ? '保存中…' : '保存配置' }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="settings__warning-box">
+          <div class="settings__warning-icon">ℹ️</div>
+          <div class="settings__warning-content">
+            <strong>还需要在 Zero 中建立商品映射</strong>
+            <p>映射键依次是闲鱼账号 ID、闲鱼商品 ID、规格 ID。商品未映射时订单会保留并自动重试，不会丢失买家提交内容。</p>
+          </div>
+        </div>
       </div>
 
       <!-- 备份与恢复 -->
