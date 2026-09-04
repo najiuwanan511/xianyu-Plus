@@ -8,6 +8,7 @@ import IconTrash from '@/components/icons/IconTrash.vue'
 import IconImage from '@/components/icons/IconImage.vue'
 import IconCheck from '@/components/icons/IconCheck.vue'
 import IconSparkle from '@/components/icons/IconSparkle.vue'
+import IconCopy from '@/components/icons/IconCopy.vue'
 
 interface Props {
   goodsList: GoodsItemWithConfig[]
@@ -15,6 +16,7 @@ interface Props {
   selectedGoodsIds?: string[]
   accountNames?: Record<number, string>
   showAccount?: boolean
+  materialImportingKey?: string
 }
 
 interface Emits {
@@ -22,6 +24,7 @@ interface Emits {
   (e: 'toggleAutoDelivery', item: GoodsItemWithConfig, value: boolean): void
   (e: 'toggleAutoReply', item: GoodsItemWithConfig, value: boolean): void
   (e: 'configure', item: GoodsItemWithConfig): void
+  (e: 'addToMaterials', item: GoodsItemWithConfig): void
   (e: 'delete', item: GoodsItemWithConfig): void
   (e: 'toggleSelect', item: GoodsItemWithConfig, selected: boolean): void
   (e: 'toggleSelectPage', selected: boolean): void
@@ -37,6 +40,7 @@ const allPageSelected = computed(() => props.goodsList.length > 0
 const isGoodsSelected = (item: GoodsItemWithConfig) => selectedGoodsSet.value.has(goodsKey(item))
 const accountName = (item: GoodsItemWithConfig) =>
   props.accountNames?.[item.item.xianyuAccountId] || `账号 ${item.item.xianyuAccountId}`
+const isImporting = (item: GoodsItemWithConfig) => props.materialImportingKey === goodsKey(item)
 
 const isMobile = ref(false)
 const checkScreenSize = () => {
@@ -140,6 +144,14 @@ const handleImgError = (e: Event) => {
 
       <!-- 底部操作栏 -->
       <div class="goods-card__actions">
+        <button
+          class="goods-card__action goods-card__action--material"
+          :disabled="isImporting(item)"
+          @click.stop="emit('addToMaterials', item)"
+        >
+          <IconCopy />
+          <span>{{ isImporting(item) ? '导入中' : '加素材' }}</span>
+        </button>
         <button
           class="goods-card__action goods-card__action--config"
           @click.stop="emit('configure', item)"
@@ -254,6 +266,10 @@ const handleImgError = (e: Event) => {
             </div>
           </td>
           <td class="table__td table__td--actions">
+            <button class="table__action table__action--material" :disabled="isImporting(item)" @click="emit('addToMaterials', item)">
+              <IconCopy />
+              <span>{{ isImporting(item) ? '导入中' : '素材' }}</span>
+            </button>
             <button class="table__action table__action--sync" @click="emit('configure', item)">
               <IconSparkle />
               <span>配置</span>
@@ -613,7 +629,7 @@ const handleImgError = (e: Event) => {
 .table__th--sku { width: 70px; text-align: center; }
 .table__th--status { width: 80px; }
 .table__th--switch { width: 90px; text-align: center; }
-.table__th--actions { width: 130px; text-align: center; }
+.table__th--actions { width: 176px; text-align: center; }
 
 /* Table Body */
 .table__tr {
@@ -867,6 +883,17 @@ const handleImgError = (e: Event) => {
 
 .table__action--sync {
   color: var(--c-accent);
+}
+
+.table__action--material {
+  color: #175cd3;
+  background: #eff4ff;
+}
+
+.table__action--material:disabled,
+.goods-card__action--material:disabled {
+  cursor: wait;
+  opacity: .6;
 }
 
 @media (hover: hover) {

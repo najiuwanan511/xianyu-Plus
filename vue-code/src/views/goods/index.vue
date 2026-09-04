@@ -5,6 +5,8 @@ import { useGoodsManager } from './useGoodsManager'
 import { getKamiConfigs } from '@/api/kami-config'
 import type { KamiConfig } from '@/api/kami-config'
 import type { GoodsItemWithConfig } from '@/api/goods'
+import { importProductMaterialFromGoods } from '@/api/product-material'
+import { toast } from '@/utils/toast'
 import './goods.css'
 import '@/styles/header-selectors.css'
 
@@ -75,6 +77,28 @@ const accountNames = computed<Record<number, string>>(() => Object.fromEntries(
 const openGoodsConfig = (item: GoodsItemWithConfig) => {
   configTarget.value = item
   configDialogVisible.value = true
+}
+
+const materialImportingKey = ref('')
+const addToMaterials = async (item: GoodsItemWithConfig) => {
+  const key = `${item.item.xianyuAccountId}:${item.item.xyGoodId}`
+  if (materialImportingKey.value) return
+  materialImportingKey.value = key
+  try {
+    const result = await importProductMaterialFromGoods({
+      xianyuAccountId: item.item.xianyuAccountId,
+      xyGoodsId: item.item.xyGoodId,
+      refreshDetail: true
+    })
+    if (!result.data?.id) throw new Error(result.msg || '加入素材库失败')
+    toast.success('已加入素材库，请核对运费和类目属性后选择其他账号发布')
+    await router.push({ path: '/product-materials' })
+  } catch (error: unknown) {
+    const requestError = error as { message?: string; messageShown?: boolean }
+    if (!requestError.messageShown) toast.error(requestError.message || '加入素材库失败')
+  } finally {
+    materialImportingKey.value = ''
+  }
 }
 
 const handleGoodsConfigSaved = () => {
@@ -466,10 +490,12 @@ const submitBatchUpdate = async () => {
           :selected-goods-ids="selectedGoodsIds"
           :account-names="accountNames"
           :show-account="selectedAccountId === 0"
+          :material-importing-key="materialImportingKey"
           @view="viewDetail"
           @toggle-auto-delivery="toggleAutoDelivery"
           @toggle-auto-reply="toggleAutoReply"
           @configure="openGoodsConfig"
+          @add-to-materials="addToMaterials"
           @delete="confirmDelete"
           @toggle-select="toggleGoodsSelection"
           @toggle-select-page="togglePageSelection"

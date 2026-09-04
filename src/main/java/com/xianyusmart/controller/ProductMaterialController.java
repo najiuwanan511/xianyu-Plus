@@ -4,6 +4,7 @@ import com.xianyusmart.common.ResultObject;
 import com.xianyusmart.controller.dto.ProductCopywritingReqDTO;
 import com.xianyusmart.controller.dto.ProductCopywritingRespDTO;
 import com.xianyusmart.controller.dto.ProductMaterialDTO;
+import com.xianyusmart.controller.dto.ProductMaterialImportReqDTO;
 import com.xianyusmart.controller.dto.ProductMaterialSaveReqDTO;
 import com.xianyusmart.service.ProductCopywritingService;
 import com.xianyusmart.service.ProductMaterialService;
@@ -39,6 +40,11 @@ public class ProductMaterialController {
     @PostMapping("/save")
     public ResultObject<ProductMaterialDTO> save(@RequestBody ProductMaterialSaveReqDTO request) {
         return ResultObject.success(materialService.save(request));
+    }
+
+    @PostMapping("/import-from-goods")
+    public ResultObject<ProductMaterialDTO> importFromGoods(@RequestBody ProductMaterialImportReqDTO request) {
+        return ResultObject.success(materialService.importFromGoods(request));
     }
 
     @PostMapping("/delete")

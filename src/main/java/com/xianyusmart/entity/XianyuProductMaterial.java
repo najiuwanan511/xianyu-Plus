@@ -13,12 +13,16 @@ import java.time.LocalDateTime;
 public class XianyuProductMaterial {
     @TableId(type = IdType.AUTO)
     private Long id;
+    private Long sourceAccountId;
+    private String sourceGoodsId;
     private String materialName;
     private String title;
     private String description;
     private BigDecimal price;
     private BigDecimal originalPrice;
     private Integer quantity;
+    private String skuPropertyName;
+    private String skuSpecsJson;
     private String deliveryMode;
     private BigDecimal postFee;
     private String imagesJson;

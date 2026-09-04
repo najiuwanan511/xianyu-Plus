@@ -39,6 +39,8 @@ const createRequestId = () => globalThis.crypto?.randomUUID?.() ||
   })
 const requestId = ref(createRequestId())
 const materialId = ref<number | undefined>(undefined)
+const materialSourceAccountId = ref<number | undefined>(undefined)
+const materialSourceGoodsId = ref<string | undefined>(undefined)
 const materialName = ref('')
 const savingMaterial = ref(false)
 const aiGenerating = ref(false)
@@ -278,12 +280,19 @@ const loadMaterial = async (id: number) => {
   const material = result.data
   if (!material) return
   materialId.value = material.id
+  materialSourceAccountId.value = material.sourceAccountId
+  materialSourceGoodsId.value = material.sourceGoodsId
   materialName.value = material.materialName
   form.title = material.title
   form.description = material.description || ''
   form.price = Number(material.price || 0)
   form.originalPrice = Number(material.originalPrice || 0)
   form.quantity = material.quantity || 1
+  form.specificationMode = (material.skuSpecs?.length || 0) >= 2
+  form.skuPropertyName = material.skuPropertyName || '规格'
+  skuSpecs.value = form.specificationMode
+    ? material.skuSpecs.map(spec => ({ ...spec, price: Number(spec.price), originalPrice: Number(spec.originalPrice || 0), quantity: Number(spec.quantity) }))
+    : [{ name: '', price: 0, quantity: 1 }]
   form.deliveryMode = material.deliveryMode
   form.postFee = Number(material.postFee || 0)
   images.value = material.images || []
@@ -292,17 +301,21 @@ const loadMaterial = async (id: number) => {
 const saveMaterial = async () => {
   if (!materialName.value.trim()) return toast.warning('请先填写素材名称')
   if (form.title.trim().length < 2) return toast.warning('请先填写商品标题')
-  if (form.specificationMode) return toast.warning('多规格商品暂不支持保存为发布素材')
+  if (!specificationReady.value) return toast.warning(form.specificationMode ? '请完善多规格名称、价格和库存' : '请填写正确的价格和库存')
   savingMaterial.value = true
   try {
     const result = await saveProductMaterial({
       id: materialId.value,
+      sourceAccountId: materialSourceAccountId.value,
+      sourceGoodsId: materialSourceGoodsId.value,
       materialName: materialName.value.trim(),
       title: form.title.trim(),
       description: form.description.trim(),
       price: form.price,
       originalPrice: form.originalPrice > 0 ? form.originalPrice : undefined,
       quantity: form.quantity,
+      skuPropertyName: form.specificationMode ? form.skuPropertyName.trim() : undefined,
+      skuSpecs: form.specificationMode ? skuSpecsPayload() : [],
       deliveryMode: form.deliveryMode,
       postFee: form.deliveryMode === 'FLAT' ? form.postFee : undefined,
       images: images.value

@@ -1,14 +1,18 @@
 import { request } from '@/utils/request'
-import type { ProductPublishImage } from './product-publish'
+import type { ProductPublishImage, ProductPublishSkuSpec } from './product-publish'
 
 export interface ProductMaterial {
   id: number
+  sourceAccountId?: number
+  sourceGoodsId?: string
   materialName: string
   title: string
   description: string
   price: number
   originalPrice?: number
   quantity: number
+  skuPropertyName?: string
+  skuSpecs: ProductPublishSkuSpec[]
   deliveryMode: 'FREE' | 'FLAT' | 'NONE' | 'SELF_PICKUP'
   postFee?: number
   images: ProductPublishImage[]
@@ -39,6 +43,10 @@ export function getProductMaterial(id: number) {
 
 export function saveProductMaterial(data: ProductMaterialSave) {
   return request<ProductMaterial>({ url: '/product-materials/save', method: 'POST', data })
+}
+
+export function importProductMaterialFromGoods(data: { xianyuAccountId: number; xyGoodsId: string; refreshDetail?: boolean }) {
+  return request<ProductMaterial>({ url: '/product-materials/import-from-goods', method: 'POST', data, timeout: 120000 })
 }
 
 export function deleteProductMaterial(id: number) {

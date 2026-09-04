@@ -49,9 +49,11 @@ public class BusinessConfigBackupHandler implements DataBackupHandler {
                 "SELECT a.unb, t.buyer_user_id AS buyerUserId, t.tag_name AS tagName "
                         + "FROM xianyu_chat_buyer_tag t JOIN xianyu_account a ON a.id = t.xianyu_account_id"));
         data.put("productMaterials", jdbcTemplate.queryForList(
-                "SELECT material_name AS materialName, title, description, price, original_price AS originalPrice, "
-                        + "quantity, delivery_mode AS deliveryMode, post_fee AS postFee, images_json AS imagesJson "
-                        + "FROM xianyu_product_material ORDER BY id"));
+                "SELECT a.unb AS sourceAccountUnb, m.source_goods_id AS sourceGoodsId, "
+                        + "m.material_name AS materialName, m.title, m.description, m.price, m.original_price AS originalPrice, "
+                        + "m.quantity, m.sku_property_name AS skuPropertyName, m.sku_specs_json AS skuSpecsJson, "
+                        + "m.delivery_mode AS deliveryMode, m.post_fee AS postFee, m.images_json AS imagesJson "
+                        + "FROM xianyu_product_material m LEFT JOIN xianyu_account a ON a.id = m.source_account_id ORDER BY m.id"));
         return data;
     }
 
@@ -70,7 +72,7 @@ public class BusinessConfigBackupHandler implements DataBackupHandler {
         importItemPolishConfigs(asMaps(data.get("itemPolishConfigs")), accountIds);
         importBuyerBlacklists(asMaps(data.get("buyerBlacklists")), accountIds);
         importBuyerTags(asMaps(data.get("buyerTags")), accountIds);
-        importProductMaterials(asMaps(data.get("productMaterials")));
+        importProductMaterials(asMaps(data.get("productMaterials")), accountIds);
     }
 
     private List<Map<String, Object>> exportKeywordRules() {
@@ -193,24 +195,33 @@ public class BusinessConfigBackupHandler implements DataBackupHandler {
         }
     }
 
-    private void importProductMaterials(List<Map<String, Object>> materials) {
+    private void importProductMaterials(List<Map<String, Object>> materials, Map<String, Long> accountIds) {
         for (Map<String, Object> material : materials) {
             String name = string(material, "materialName");
             String title = string(material, "title");
             if (blank(name) && blank(title)) {
                 continue;
             }
-            Long id = findId("SELECT id FROM xianyu_product_material WHERE material_name <=> ? AND title <=> ? LIMIT 1", name, title);
-            Object[] values = {name, title, string(material, "description"), decimal(material, "price"),
-                    decimal(material, "originalPrice"), integer(material, "quantity", 1), string(material, "deliveryMode"),
-                    decimal(material, "postFee"), string(material, "imagesJson")};
+            String sourceUnb = string(material, "sourceAccountUnb");
+            Long sourceAccountId = blank(sourceUnb) ? null : accountIds.get(sourceUnb);
+            String sourceGoodsId = string(material, "sourceGoodsId");
+            Long id = sourceAccountId != null && !blank(sourceGoodsId)
+                    ? findId("SELECT id FROM xianyu_product_material WHERE source_account_id = ? AND source_goods_id = ? LIMIT 1",
+                    sourceAccountId, sourceGoodsId)
+                    : findId("SELECT id FROM xianyu_product_material WHERE material_name <=> ? AND title <=> ? LIMIT 1", name, title);
+            Object[] values = {sourceAccountId, sourceGoodsId, name, title,
+                    string(material, "description"), decimal(material, "price"), decimal(material, "originalPrice"),
+                    integer(material, "quantity", 1), string(material, "skuPropertyName"), string(material, "skuSpecsJson"),
+                    stringOr(material, "deliveryMode", "FREE"), decimal(material, "postFee"), string(material, "imagesJson")};
             if (id == null) {
                 jdbcTemplate.update("INSERT INTO xianyu_product_material "
-                                + "(material_name, title, description, price, original_price, quantity, delivery_mode, post_fee, images_json) "
-                                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", values);
+                                + "(source_account_id, source_goods_id, material_name, title, description, price, original_price, "
+                                + "quantity, sku_property_name, sku_specs_json, delivery_mode, post_fee, images_json) "
+                                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", values);
             } else {
-                jdbcTemplate.update("UPDATE xianyu_product_material SET material_name = ?, title = ?, description = ?, price = ?, "
-                                + "original_price = ?, quantity = ?, delivery_mode = ?, post_fee = ?, images_json = ? WHERE id = ?",
+                jdbcTemplate.update("UPDATE xianyu_product_material SET source_account_id = ?, source_goods_id = ?, "
+                                + "material_name = ?, title = ?, description = ?, price = ?, original_price = ?, quantity = ?, "
+                                + "sku_property_name = ?, sku_specs_json = ?, delivery_mode = ?, post_fee = ?, images_json = ? WHERE id = ?",
                         concat(values, id));
             }
         }

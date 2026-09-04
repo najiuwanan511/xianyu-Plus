@@ -10,12 +10,16 @@ import java.util.List;
 @Data
 public class ProductMaterialDTO {
     private Long id;
+    private Long sourceAccountId;
+    private String sourceGoodsId;
     private String materialName;
     private String title;
     private String description;
     private BigDecimal price;
     private BigDecimal originalPrice;
     private Integer quantity;
+    private String skuPropertyName;
+    private List<ProductPublishReqDTO.SkuSpec> skuSpecs = new ArrayList<>();
     private String deliveryMode;
     private BigDecimal postFee;
     private List<ProductPublishReqDTO.Image> images = new ArrayList<>();
