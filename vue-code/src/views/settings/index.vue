@@ -40,6 +40,8 @@ const zeroCallbackSecret = ref('')
 const zeroSaving = ref(false)
 const zeroTesting = ref(false)
 const zeroLoaded = ref(false)
+const showZeroApiToken = ref(false)
+const showZeroCallbackSecret = ref(false)
 const zeroCallbackUrl = `${window.location.origin}/api/integrations/zero/callback`
 
 // 相似度阈值
@@ -280,6 +282,39 @@ function randomSecret(length = 48) {
   const bytes = new Uint8Array(length)
   crypto.getRandomValues(bytes)
   return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
+}
+
+function fallbackCopyText(value: string) {
+  const input = document.createElement('textarea')
+  input.value = value
+  input.setAttribute('readonly', '')
+  input.style.position = 'fixed'
+  input.style.opacity = '0'
+  document.body.appendChild(input)
+  input.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(input)
+  if (!copied) throw new Error('浏览器拒绝复制')
+}
+
+async function copyZeroValue(value: string, label: string) {
+  const text = value.trim()
+  if (!text) {
+    toast.warning(`${label}为空，请先生成或填写`)
+    return
+  }
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
+    else fallbackCopyText(text)
+    toast.success(`${label}已复制`)
+  } catch {
+    try {
+      fallbackCopyText(text)
+      toast.success(`${label}已复制`)
+    } catch {
+      toast.error('复制失败，请点击显示后手动复制')
+    }
+  }
 }
 
 async function saveZeroConfig() {
@@ -955,18 +990,36 @@ function handleBackupMenuEnter() {
             </div>
             <div class="settings__field">
               <label class="settings__label">API Token</label>
-              <input v-model="zeroApiToken" class="settings__input" type="password" autocomplete="new-password" placeholder="与 Zero 的闲鱼对接 Token 完全一致" />
+              <div class="settings__input-wrap">
+                <input v-model="zeroApiToken" class="settings__input settings__input--secret-actions" :type="showZeroApiToken ? 'text' : 'password'" autocomplete="new-password" placeholder="与 Zero 的闲鱼对接 Token 完全一致" />
+                <div class="settings__secret-actions">
+                  <button type="button" @click="zeroApiToken = randomSecret()">生成</button>
+                  <button type="button" @click="copyZeroValue(zeroApiToken, 'API Token')">复制</button>
+                  <button type="button" @click="showZeroApiToken = !showZeroApiToken">{{ showZeroApiToken ? '隐藏' : '显示' }}</button>
+                </div>
+              </div>
+              <p class="settings__hint">推荐在 Zero 中生成并复制到这里；如果在此生成，需复制后覆盖 Zero 中的 Token。</p>
             </div>
             <div class="settings__field">
               <label class="settings__label">回调密钥</label>
               <div class="settings__input-wrap">
-                <input v-model="zeroCallbackSecret" class="settings__input" type="password" autocomplete="new-password" placeholder="与 Zero 回调密钥完全一致" />
-                <button class="settings__eye-btn" type="button" @click="zeroCallbackSecret = randomSecret()">生成</button>
+                <input v-model="zeroCallbackSecret" class="settings__input settings__input--secret-actions" :type="showZeroCallbackSecret ? 'text' : 'password'" autocomplete="new-password" placeholder="与 Zero 回调密钥完全一致" />
+                <div class="settings__secret-actions">
+                  <button type="button" @click="zeroCallbackSecret = randomSecret()">生成</button>
+                  <button type="button" @click="copyZeroValue(zeroCallbackSecret, '回调密钥')">复制</button>
+                  <button type="button" @click="showZeroCallbackSecret = !showZeroCallbackSecret">{{ showZeroCallbackSecret ? '隐藏' : '显示' }}</button>
+                </div>
               </div>
+              <p class="settings__hint">必须与 Zero 的“回调签名密钥”逐字一致。</p>
             </div>
             <div class="settings__field">
               <label class="settings__label">填入 Zero 的回调地址</label>
-              <input :value="zeroCallbackUrl" class="settings__input" readonly />
+              <div class="settings__input-wrap">
+                <input :value="zeroCallbackUrl" class="settings__input settings__input--copy-action" readonly />
+                <div class="settings__secret-actions">
+                  <button type="button" @click="copyZeroValue(zeroCallbackUrl, '回调地址')">复制</button>
+                </div>
+              </div>
               <p class="settings__hint">若 Zero 与本系统不在同一网络，请换成 Zero 能访问的 HTTPS 公网地址；签名会阻止伪造回调。</p>
             </div>
             <div class="settings__actions">
@@ -1564,6 +1617,37 @@ function handleBackupMenuEnter() {
 
 .settings__eye-btn:hover {
   color: #1c1c1e;
+}
+
+.settings__input--secret-actions {
+  padding-right: 142px;
+}
+
+.settings__input--copy-action {
+  padding-right: 58px;
+}
+
+.settings__secret-actions {
+  position: absolute;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.settings__secret-actions button {
+  background: transparent;
+  border: 0;
+  color: rgba(28,28,30,.62);
+  cursor: pointer;
+  padding: 4px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.settings__secret-actions button:hover {
+  color: #1c1c1e;
+  background: rgba(60,60,67,.08);
 }
 
 .settings__textarea {
