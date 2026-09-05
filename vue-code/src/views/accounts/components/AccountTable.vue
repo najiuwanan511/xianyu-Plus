@@ -80,9 +80,16 @@ const runAction = (event: MouseEvent, action: () => void) => {
   action()
 }
 
-const getStatusColor = (status: number) => {
-  if (status === 0) return '#8e8e93'
-  const info = getAccountStatusText(status)
+const getDisplayStatus = (account: Account) => {
+  if (account.status === 1 && account.websocketConnected === false) {
+    return { text: '连接断开', type: 'warning' }
+  }
+  return getAccountStatusText(account.status)
+}
+
+const getStatusColor = (account: Account) => {
+  if (account.status === 0) return '#8e8e93'
+  const info = getDisplayStatus(account)
   switch (info.type) {
     case 'success': return '#34c759'
     case 'warning': return '#ff9500'
@@ -91,9 +98,9 @@ const getStatusColor = (status: number) => {
   }
 }
 
-const getStatusBg = (status: number) => {
-  if (status === 0) return 'rgba(120,120,128,.12)'
-  const info = getAccountStatusText(status)
+const getStatusBg = (account: Account) => {
+  if (account.status === 0) return 'rgba(120,120,128,.12)'
+  const info = getDisplayStatus(account)
   switch (info.type) {
     case 'success': return 'rgba(52, 199, 89, 0.1)'
     case 'warning': return 'rgba(255, 149, 0, 0.1)'
@@ -102,9 +109,9 @@ const getStatusBg = (status: number) => {
   }
 }
 
-const getStatusRing = (status: number) => {
-  if (status === 0) return '0 0 0 4px rgba(120,120,128,.12)'
-  const info = getAccountStatusText(status)
+const getStatusRing = (account: Account) => {
+  if (account.status === 0) return '0 0 0 4px rgba(120,120,128,.12)'
+  const info = getDisplayStatus(account)
   switch (info.type) {
     case 'success': return '0 0 0 4px rgba(52,199,89,.10)'
     case 'warning': return '0 0 0 4px rgba(255,149,0,.12)'
@@ -113,16 +120,20 @@ const getStatusRing = (status: number) => {
   }
 }
 
-const getStatusDescription = (status: number) => {
-  if (status === 1) return '账号已启用 · 当前状态正常'
-  if (status === 0) return '账号已禁用 · 连接与自动化已暂停'
-  if (status === -2) return '账号已启用 · 等待完成平台验证'
-  if (status === -1) return '账号已启用 · 请检查连接状态'
+const getStatusDescription = (account: Account) => {
+  if (account.status === 1 && account.websocketConnected === false) return '账号已启用 · WebSocket 当前未连接'
+  if (account.status === 1) return '账号已启用 · 当前状态正常'
+  if (account.status === 0) return '账号已禁用 · 连接与自动化已暂停'
+  if (account.status === -2) return '账号已启用 · 等待完成平台验证'
+  if (account.status === -1) return '账号已启用 · 请检查连接状态'
   return '账号已启用 · 请检查当前状态'
 }
 
 const isEnabled = (value?: number) => value === 1
-const isRiskPaused = (_account: Account) => false
+const isRiskPaused = (account: Account) => {
+  void account
+  return false
+}
 const canToggleEnabled = (account: Account) => account.status !== undefined && account.status !== null
 const getItemPolishStatus = (account: Account) => {
   if (!isEnabled(account.itemPolishEnabled)) return '关闭'
@@ -174,12 +185,12 @@ const refreshAvatar = (account: Account) => {
         <span
           class="account-card__status"
           :style="{
-            color: getStatusColor(account.status),
-            background: getStatusBg(account.status)
+            color: getStatusColor(account),
+            background: getStatusBg(account)
           }"
         >
-          <component :is="getAccountStatusText(account.status).type === 'success' ? IconCheck : IconAlert" />
-          {{ getAccountStatusText(account.status).text }}
+          <component :is="getDisplayStatus(account).type === 'success' ? IconCheck : IconAlert" />
+          {{ getDisplayStatus(account).text }}
         </span>
       </div>
 
@@ -292,13 +303,13 @@ const refreshAvatar = (account: Account) => {
               </div>
             </div>
           </div>
-          <section class="account-overview-card__section account-overview-card__section--status" :style="{ background: getStatusBg(account.status) }">
+          <section class="account-overview-card__section account-overview-card__section--status" :style="{ background: getStatusBg(account) }">
               <span class="account-overview-card__label">账号状态</span>
               <div class="account-overview-card__status">
-                <i :style="{ background: getStatusColor(account.status), boxShadow: getStatusRing(account.status) }"></i>
-                <strong :style="{ color: getStatusColor(account.status) }">{{ getAccountStatusText(account.status).text }}</strong>
+                <i :style="{ background: getStatusColor(account), boxShadow: getStatusRing(account) }"></i>
+                <strong :style="{ color: getStatusColor(account) }">{{ getDisplayStatus(account).text }}</strong>
               </div>
-              <small>{{ getStatusDescription(account.status) }}</small>
+              <small>{{ getStatusDescription(account) }}</small>
           </section>
           <section class="account-overview-card__section account-overview-card__section--automation">
             <span class="account-overview-card__label">自动化</span>

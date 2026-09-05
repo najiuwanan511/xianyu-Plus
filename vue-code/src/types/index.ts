@@ -1,5 +1,5 @@
 // 通用响应类型
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   code: number
   msg: string
   message?: string  // 兼容字段
@@ -21,6 +21,7 @@ export interface Account {
   autoAskFlowerText?: string
   itemPolishEnabled?: number
   itemPolishScheduleTime?: string
+  websocketConnected?: boolean
   autoConnectOnStartup?: number
   automationRiskPaused?: number
   automationRiskPauseReason?: string

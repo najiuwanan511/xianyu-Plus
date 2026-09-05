@@ -14,6 +14,8 @@ import IconQrCode from '@/components/icons/IconQrCode.vue'
 import IconPlus from '@/components/icons/IconPlus.vue'
 import IconSync from '@/components/icons/IconSync.vue'
 
+defineOptions({ name: 'AccountManagement' })
+
 type AccountEditorSection = 'profile' | 'rate' | 'flower' | 'polish'
 
 const route = useRoute()
@@ -28,7 +30,6 @@ const {
   currentAccount,
   deleteAccountId,
   loadAccounts,
-  showAddDialog,
   showManualAddDialog,
   showQRLoginDialog,
   editAccount,
@@ -61,8 +62,15 @@ const openConnection = (account: Account) => {
 
 const closeConnection = () => {
   selectedConnectionAccountId.value = null
-  const { accountId: _accountId, connection: _connection, ...rest } = route.query
+  const rest = { ...route.query }
+  delete rest.accountId
+  delete rest.connection
   router.replace({ path: '/accounts', query: rest })
+}
+
+const updateConnectionStatus = (accountId: number, connected: boolean) => {
+  const account = accounts.value.find(item => Number(item.id) === accountId)
+  if (account) account.websocketConnected = connected
 }
 
 const openAccountEditor = (account: Account, section: AccountEditorSection = 'profile') => {
@@ -134,6 +142,7 @@ void loadAccounts();
             :account-name="selectedConnectionAccount.accountNote || selectedConnectionAccount.unb"
             :account-unb="selectedConnectionAccount.unb"
             :auto-connect-on-startup="selectedConnectionAccount.autoConnectOnStartup"
+            @status-change="updateConnectionStatus"
           />
         </div>
       </aside>

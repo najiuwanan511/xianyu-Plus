@@ -77,11 +77,12 @@ class WebSocketCredentialRecoveryTest {
     }
 
     @Test
-    void savingFreshCookieDoesNotPrematurelyClearVerificationStatus() {
+    void savingFreshCookiePreservesVerificationStatusAndExistingAccountNote() {
         AccountServiceImpl service = new AccountServiceImpl();
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
         XianyuCookieMapper cookieMapper = mock(XianyuCookieMapper.class);
         XianyuAccount account = account(7L, -2);
+        account.setAccountNote("我的主账号");
         XianyuCookie cookie = new XianyuCookie();
         cookie.setId(11L);
         cookie.setXianyuAccountId(7L);
@@ -94,6 +95,7 @@ class WebSocketCredentialRecoveryTest {
                 "unb=123456; _m_h5_tk=fresh_1", "fresh_1");
 
         assertEquals(-2, account.getStatus());
+        assertEquals("我的主账号", account.getAccountNote());
         verify(accountMapper).updateById(account);
         verify(cookieMapper).updateById(cookie);
     }

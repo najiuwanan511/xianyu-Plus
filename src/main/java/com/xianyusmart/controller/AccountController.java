@@ -83,6 +83,7 @@ public class AccountController {
                 XianyuItemPolishConfig config = polishConfigs.get(account.getId());
                 account.setItemPolishEnabled(config == null || config.getEnabled() == null ? 0 : config.getEnabled());
                 account.setItemPolishScheduleTime(config == null ? null : config.getScheduleTime());
+                account.setWebsocketConnected(webSocketService.isConnected(account.getId()));
             }
             GetAccountListRespDTO respDTO = new GetAccountListRespDTO();
             respDTO.setAccounts(accounts);

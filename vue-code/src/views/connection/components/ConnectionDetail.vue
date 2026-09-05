@@ -53,6 +53,14 @@ interface Props {
 
 const props = defineProps<Props>()
 
+interface Emits {
+  (e: 'statusChange', accountId: number, connected: boolean): void
+}
+
+const emit = defineEmits<Emits>()
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error || '未知错误')
+
 const connectionStatus = ref<ConnectionStatus | null>(null)
 const statusLoading = ref(false)
 let statusInterval: number | null = null
@@ -81,9 +89,9 @@ const handleAutoConnectChange = async () => {
     showSuccess(autoConnectOnStartup.value
       ? '已开启：服务器重启后会自动恢复该账号连接'
       : '已关闭：服务器重启后不会自动连接该账号')
-  } catch (error: any) {
+  } catch (error: unknown) {
     autoConnectOnStartup.value = previousValue
-    showError(`保存开机连接设置失败：${error.message || '未知错误'}`)
+    showError(`保存开机连接设置失败：${getErrorMessage(error)}`)
   }
 }
 
@@ -93,12 +101,15 @@ const loadConnectionStatus = async (silent = false) => {
   try {
     const response = await getConnectionStatus(props.accountId)
     if (response.code === 0 || response.code === 200) {
-      connectionStatus.value = response.data as ConnectionStatus
+      const status = response.data as ConnectionStatus | undefined
+      if (!status) throw new Error('连接状态数据为空')
+      connectionStatus.value = status
+      emit('statusChange', props.accountId, status.connected === true)
     } else {
       throw new Error(response.msg || '获取连接状态失败')
     }
-  } catch (error: any) {
-    console.error('加载状态失败:', error.message)
+  } catch (error: unknown) {
+    console.error('加载状态失败:', getErrorMessage(error))
   } finally {
     statusLoading.value = false
   }
@@ -119,9 +130,9 @@ const handleStartConnection = async () => {
     } else {
       throw new Error(response.msg || '启动连接失败')
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error !== 'cancel' && error !== 'close') {
-      showError('启动连接失败: ' + error.message)
+      showError('启动连接失败: ' + getErrorMessage(error))
     }
   } finally {
     statusLoading.value = false
@@ -146,8 +157,8 @@ const handleStopConnection = async () => {
     } else {
       throw new Error(response.msg || '断开连接失败')
     }
-  } catch (error: any) {
-    showError('断开连接失败: ' + error.message)
+  } catch (error: unknown) {
+    showError('断开连接失败: ' + getErrorMessage(error))
   } finally {
     statusLoading.value = false
   }
@@ -263,13 +274,13 @@ const handleRepairConnection = async () => {
 
     await loadConnectionStatus(true)
     showSuccess('连接已自动修复，无需其他操作')
-  } catch (error: any) {
+  } catch (error: unknown) {
     await loadConnectionStatus(true)
     if (isVerificationRequired()) {
       showCredentialDialog.value = true
       showInfo('平台要求安全验证，请点击“继续验证并修复”')
     } else {
-      openQRRecovery(`自动修复未完成：${error.message || '凭证需要更新'}。请扫码一次，系统将自动恢复连接`)
+      openQRRecovery(`自动修复未完成：${getErrorMessage(error)}。请扫码一次，系统将自动恢复连接`)
     }
   } finally {
     repairingConnection.value = false

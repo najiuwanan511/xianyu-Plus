@@ -41,6 +41,10 @@ public class XianyuAccount {
     /** 自动擦亮每日计划时间，仅用于账号列表展示。 */
     @TableField(exist = false)
     private String itemPolishScheduleTime;
+
+    /** WebSocket 实时连接状态，仅用于账号列表展示，不写入数据库。 */
+    @TableField(exist = false)
+    private Boolean websocketConnected;
     
     /**
      * 设备ID（UUID格式-用户ID，用于WebSocket连接）

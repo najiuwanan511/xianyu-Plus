@@ -134,7 +134,11 @@ public class AccountServiceImpl implements AccountService {
             if (existingAccount != null) {
                 // 账号已存在，更新信息
                 accountId = existingAccount.getId();
-                existingAccount.setAccountNote(accountNote);
+                // 扫码更新凭证会携带系统生成的默认备注。已有账号的用户备注
+                // 必须保留；仅在历史账号没有备注时补上本次备注。
+                if (existingAccount.getAccountNote() == null || existingAccount.getAccountNote().isBlank()) {
+                    existingAccount.setAccountNote(accountNote);
+                }
                 // A new Cookie is only the first recovery step. Accounts paused
                 // for verification return to normal after WebSocket initialization.
                 if (!Integer.valueOf(-2).equals(existingAccount.getStatus())) {
@@ -186,7 +190,7 @@ public class AccountServiceImpl implements AccountService {
                         cookie.getId(), mH5Tk != null ? "已保存" : "未提供");
             }
 
-            log.info("保存账号和Cookie完成: accountId={}, accountNote={}", accountId, accountNote);
+            log.info("保存账号和Cookie完成: accountId={}", accountId);
             return accountId;
 
         } catch (Exception e) {
