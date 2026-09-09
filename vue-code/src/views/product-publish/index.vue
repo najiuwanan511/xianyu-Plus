@@ -106,13 +106,26 @@ const listingPrice = computed(() => form.specificationMode
   ? Math.min(...skuSpecs.value.map(spec => Number(spec.price) || Number.MAX_SAFE_INTEGER))
   : form.price)
 const specificationTotalQuantity = computed(() => skuSpecs.value.reduce((total, spec) => total + (Number(spec.quantity) || 0), 0))
-const canPublish = computed(() => Boolean(
-  selectedAccountId.value && supportsPublishForm(schema.value?.supportLevel) && schema.value.locationApiReady &&
-  schema.value.dependentPropertyCount === 0 &&
-  requiredPropertiesReady.value &&
-  images.value.length && selectedLocationKey.value && form.title.trim().length >= 2 && form.description.trim().length >= 2 &&
-  specificationReady.value && acknowledged.value && !publishing.value
-))
+const singlePublishIssues = computed(() => {
+  const issues: string[] = []
+  if (!selectedAccountId.value) issues.push('请选择发布账号')
+  if (!schema.value) {
+    issues.push('请先点击“识别类目”')
+  } else {
+    if (!supportsPublishForm(schema.value.supportLevel)) issues.push(schema.value.supportLabel || '当前类目暂不支持直接发布')
+    if (!schema.value.locationApiReady) issues.push('当前账号未返回可用发布地点')
+    if (schema.value.dependentPropertyCount > 0) issues.push('仍有联动属性待加载')
+    if (!requiredPropertiesReady.value) issues.push('请填写全部必填类目属性')
+  }
+  if (form.title.trim().length < 2) issues.push('请填写商品标题')
+  if (form.description.trim().length < 2) issues.push('请填写商品描述')
+  if (!images.value.length) issues.push('请至少上传 1 张商品图片')
+  if (!specificationReady.value) issues.push(form.specificationMode ? '请完善多规格价格与库存' : '请填写正确的价格与库存')
+  if (!selectedLocationKey.value) issues.push('请选择发布地点')
+  if (!acknowledged.value) issues.push('请勾选最终确认')
+  return issues
+})
+const canPublish = computed(() => singlePublishIssues.value.length === 0 && !publishing.value)
 const canBatchPublish = computed(() => Boolean(batchMode.value && targetAccountIds.value.length > 1 &&
   batchStates.value.length === targetAccountIds.value.length &&
   batchStates.value.every(state => state.status === 'READY' && state.locationKey) &&
@@ -125,6 +138,10 @@ const loadAccounts = async () => {
   const result = await getAccountList()
   accounts.value = result.data?.accounts || []
   selectedAccountId.value = publishAccounts.value[0]?.id || null
+  if (batchMode.value && publishAccounts.value.length < 2) {
+    batchMode.value = false
+    toast.info('当前只有一个可发布账号，已自动切换为单账号发布')
+  }
   if (!selectedAccountId.value && accounts.value.length) {
     toast.warning('没有状态正常的发布账号，请先到账号管理恢复账号')
   }
@@ -637,8 +654,8 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="publish-card batch-card">
-      <div class="section-title"><div><h2>多账号发布</h2><p>每个账号分别读取类目、属性和地址，确认后按顺序逐个发布。</p></div><label class="mode-switch"><input v-model="batchMode" type="checkbox">启用多账号发布</label></div>
+    <section v-if="publishAccounts.length > 1" class="publish-card batch-card">
+      <div class="section-title"><div><h2>可选：多账号发布</h2><p>不启用时直接使用上方选中的单个账号发布；启用后才会逐账号预检和发布。</p></div><label class="mode-switch"><input v-model="batchMode" type="checkbox">启用多账号发布</label></div>
       <template v-if="batchMode">
         <div class="account-checks">
           <label v-for="account in publishAccounts" :key="account.id"><input v-model="targetAccountIds" type="checkbox" :value="account.id">{{ account.accountNote || account.unb }}</label>
@@ -723,8 +740,10 @@ onMounted(async () => {
     <section class="publish-card confirm-card">
       <h2>5. 最终确认</h2>
       <div class="confirm-location"><span>{{ batchMode ? '本次发布账号' : '本次发布地点' }}</span><strong>{{ batchMode ? `${batchStates.filter(state => state.status === 'READY').length} 个账号已预检通过` : (customPoiName.trim() || selectedLocation?.displayName || '尚未选择') }}</strong></div>
+      <div v-if="!batchMode && singlePublishIssues.length" class="publish-readiness"><strong>单账号发布按钮暂不可用</strong><span>{{ singlePublishIssues.join('；') }}</span></div>
+      <div v-else-if="!batchMode" class="publish-readiness publish-readiness--ready"><strong>单账号发布信息已完整</strong><span>点击按钮后将使用“{{ accountLabel(selectedAccountId || 0) }}”真实发布。</span></div>
       <label class="ack"><input v-model="acknowledged" type="checkbox">我已逐项核对账号、图片、价格、库存、类目、商品描述和发布地点，并确认商品符合闲鱼规则。</label>
-      <button type="button" class="publish-button" :disabled="batchMode ? !canBatchPublish : !canPublish" @click="submit">{{ publishing ? (batchMode ? '正在逐账号发布…' : '正在发布…') : (batchMode ? `确认发布到 ${targetAccountIds.length} 个账号` : '确认并真实发布') }}</button>
+      <button type="button" class="publish-button" :disabled="batchMode ? !canBatchPublish : !canPublish" :title="!batchMode && singlePublishIssues.length ? singlePublishIssues.join('；') : ''" @click="submit">{{ publishing ? (batchMode ? '正在逐账号发布…' : '正在发布…') : (batchMode ? `确认发布到 ${targetAccountIds.length} 个账号` : '使用当前账号直接发布') }}</button>
     </section>
   </main>
 </template>
@@ -734,5 +753,6 @@ onMounted(async () => {
 .location-button,.location-actions button{border:1px solid #b2ccff;border-radius:8px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.location-button:disabled,.location-actions button:disabled{opacity:.5;cursor:not-allowed}.location-help{margin:8px 0 12px;color:#667085;font-size:13px}.location-actions{display:flex;align-items:center;gap:12px;margin-bottom:12px}.location-actions span{color:#067647;font-size:12px}.location-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.location-list>label{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid #e4e7ec;border-radius:10px;cursor:pointer}.location-list>label.selected{border-color:#84adff;background:#f5f8ff}.location-list label>span{display:flex;min-width:0;flex-direction:column;gap:4px}.location-list strong{font-size:14px}.location-list small{color:#667085}.location-empty{padding:16px;border:1px dashed #fdb022;border-radius:9px;background:#fffaeb;color:#b54708}.custom-location{display:flex;flex-direction:column;gap:6px;margin-top:14px}.custom-location>span{font-size:12px;font-weight:700;color:#475467}.custom-location input{box-sizing:border-box;width:100%;border:1px solid #d0d5dd;border-radius:8px;padding:10px 11px}.custom-location small{color:#667085}.confirm-location{display:flex;flex-direction:column;gap:5px;padding:10px;border-radius:8px;background:#f2f4f7}.confirm-location span{font-size:12px;color:#667085}.confirm-location strong{font-size:13px}.confirm-card .confirm-location{grid-column:1/-1}@media(max-width:700px){.location-list{grid-template-columns:1fr}.location-actions{align-items:flex-start;flex-direction:column}}
 .header-actions{display:flex;align-items:center;gap:9px}.header-actions button,.material-bar button,.ai-buttons button,.batch-tools button{border:1px solid #b2ccff;border-radius:8px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.header-actions span{padding:7px 11px;border-radius:999px;background:#eef4ff;color:#3538cd;font-size:12px;font-weight:700}.material-bar{display:flex;align-items:end;gap:10px;margin-bottom:16px;padding:14px 18px;border:1px solid #d1e0ff;border-radius:12px;background:#f5f8ff}.material-bar label{display:flex;min-width:320px;flex-direction:column;gap:5px}.material-bar label span,.ai-panel label span,.batch-results label span{font-size:12px;font-weight:700;color:#475467}.material-bar input,.ai-panel select,.ai-panel textarea,.batch-results select,.batch-results textarea{box-sizing:border-box;width:100%;border:1px solid #d0d5dd;border-radius:8px;padding:9px;background:#fff}.material-bar small{color:#667085}.description-workspace{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,.6fr);gap:14px;align-items:stretch}.description-workspace>label{display:flex;flex-direction:column;gap:6px}.ai-panel{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid #d1e9ff;border-radius:10px;background:#f5fbff}.ai-panel>div:first-child{display:flex;flex-direction:column}.ai-panel>div:first-child small{color:#667085}.ai-panel label{display:flex;flex-direction:column;gap:5px}.ai-buttons{display:flex;gap:7px}.ai-buttons button{flex:1}.ai-buttons button:disabled,.batch-tools button:disabled{opacity:.5;cursor:not-allowed}.vision-ok{color:#067647}.vision-fallback{color:#b54708}.batch-card .section-title p{margin:5px 0;color:#667085;font-size:13px}.mode-switch{display:flex;align-items:center;gap:7px;font-weight:700}.account-checks{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}.account-checks label{padding:8px 11px;border:1px solid #d0d5dd;border-radius:999px;background:#fff}.batch-tools{display:flex;align-items:center;gap:9px}.batch-tools small{color:#667085}.batch-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.batch-results article{padding:13px;border:1px solid #e4e7ec;border-radius:10px}.batch-results article.status-ready,.batch-results article.status-published{border-color:#a6f4c5;background:#f6fef9}.batch-results article.status-failed{border-color:#fecdca;background:#fffbfa}.batch-result-head{display:flex;justify-content:space-between}.batch-result-head span{font-size:12px;font-weight:700}.batch-results p{margin:6px 0 10px;color:#667085;font-size:12px}.batch-results label{display:flex;flex-direction:column;gap:5px;margin-top:8px}.batch-results>article>small{color:#067647}@media(max-width:900px){.description-workspace,.batch-results{grid-template-columns:1fr}.material-bar{align-items:stretch;flex-direction:column}.material-bar label{min-width:0}.header-actions{align-items:flex-start;flex-direction:column}.batch-tools{align-items:stretch;flex-direction:column}}
 .level--service_form{background:#e0f2fe;color:#075985}.service-tip{margin:14px 0;padding:11px;border:1px solid #bae6fd;border-radius:8px;background:#f0f9ff;color:#075985;font-size:13px}.property-refreshing{margin-top:14px;padding:10px 12px;border:1px solid #b2ccff;border-radius:8px;background:#f5f8ff;color:#175cd3;font-size:12px}
+.publish-readiness{display:flex;grid-column:1/-1;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid #fdb022;border-radius:8px;background:#fffaeb;color:#93370d;font-size:12px}.publish-readiness--ready{border-color:#a6f4c5;background:#f6fef9;color:#067647}
 .specification-switch{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;padding:10px 12px;border:1px solid #d1e0ff;border-radius:8px;background:#f5f8ff}.specification-switch label{display:flex;align-items:center;gap:7px;font-weight:700;color:#175cd3}.specification-switch span{font-size:12px;color:#475467}.sku-editor{padding:14px;border:1px solid #d0d5dd;border-radius:8px;background:#fff}.sku-property-name{display:flex;align-items:center;gap:10px;margin-bottom:12px}.sku-property-name span{min-width:56px;font-size:12px;font-weight:700;color:#475467}.sku-property-name input,.sku-editor__row input{box-sizing:border-box;width:100%;min-width:0;border:1px solid #d0d5dd;border-radius:7px;padding:9px 10px;color:#1d2939;outline:none}.sku-editor__head,.sku-editor__row{display:grid;grid-template-columns:minmax(150px,1.5fr) minmax(100px,1fr) minmax(100px,1fr) minmax(80px,.7fr) 32px;gap:9px;align-items:center}.sku-editor__head{padding:0 0 6px;font-size:12px;font-weight:700;color:#475467}.sku-editor__row{margin-top:8px}.sku-editor__remove{width:32px;height:32px;border:1px solid #fecdca;border-radius:7px;background:#fff;color:#b42318;font-size:20px;line-height:1;cursor:pointer}.sku-editor__remove:disabled{opacity:.45;cursor:not-allowed}.sku-editor__add{margin-top:12px;border:1px solid #b2ccff;border-radius:7px;background:#fff;padding:8px 12px;color:#175cd3;font-weight:700;cursor:pointer}.sku-editor__add:disabled{opacity:.5;cursor:not-allowed}.delivery-pricing{grid-template-columns:repeat(2,minmax(160px,220px));margin-top:14px}@media(max-width:700px){.specification-switch{align-items:flex-start;flex-direction:column}.sku-editor{overflow-x:auto}.sku-editor__head,.sku-editor__row{min-width:620px}.delivery-pricing{grid-template-columns:1fr}.sku-property-name{align-items:flex-start;flex-direction:column;gap:5px}.sku-property-name span{min-width:0}}
 </style>

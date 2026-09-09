@@ -27,7 +27,7 @@ const remove = async (material: ProductMaterial) => {
   await load()
 }
 
-const edit = (material: ProductMaterial) => router.push({ path: '/product-publish', query: { materialId: material.id } })
+const publishOne = (material: ProductMaterial) => router.push({ path: '/product-publish', query: { materialId: material.id } })
 const batch = (material: ProductMaterial) => router.push({ path: '/product-publish', query: { materialId: material.id, batch: '1' } })
 
 onMounted(load)
@@ -55,7 +55,7 @@ onMounted(load)
           <p>{{ material.description || '尚未填写商品描述' }}</p>
           <div class="meta"><strong>¥{{ Number(material.price || 0).toFixed(2) }}</strong><span>{{ material.images?.length || 0 }} 张图片 · {{ material.skuSpecs?.length >= 2 ? `${material.skuSpecs.length} 个规格` : `库存 ${material.quantity}` }}</span></div>
           <div class="actions">
-            <button @click="edit(material)">编辑</button>
+            <button @click="publishOne(material)">单账号发布</button>
             <button class="batch" @click="batch(material)">多账号发布</button>
             <button class="danger" @click="remove(material)">删除</button>
           </div>

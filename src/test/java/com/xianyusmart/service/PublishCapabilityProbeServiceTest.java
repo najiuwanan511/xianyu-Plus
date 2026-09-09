@@ -85,6 +85,45 @@ class PublishCapabilityProbeServiceTest {
     }
 
     @Test
+    void shouldAllowVirtualMembershipWhenPlatformReturnsCompleteDynamicForm() {
+        XianyuAccount account = new XianyuAccount();
+        account.setId(12L);
+        when(accountMapper.selectById(12L)).thenReturn(account);
+        when(accountService.getCookieByAccountId(12L)).thenReturn("_m_h5_tk=token_exp; unb=seller");
+
+        String categoryResponse = """
+                {"ret":["SUCCESS::调用成功"],"data":{
+                  "categoryPredictResult":{"catId":"virtual-1","catName":"视频会员充值","channelCatId":"100","tbCatId":"200"},
+                  "cardList":[
+                    {"cardData":{"propertyId":"1","propertyName":"适用平台","required":true,"valuesList":[{"valueId":"doubao","catName":"豆包"}]}},
+                    {"cardData":{"propertyId":"2","propertyName":"使用周期","required":true,"valuesList":[{"valueId":"30d","catName":"30天"}]}},
+                    {"cardData":{"propertyId":"3","propertyName":"是否支持电视","required":true,"valuesList":[{"valueId":"no","catName":"否"}]}},
+                    {"cardData":{"propertyId":"4","propertyName":"交易形式","required":true,"valuesList":[{"valueId":"direct","catName":"直充"}]}}
+                  ]
+                }}
+                """;
+        String locationResponse = """
+                {"ret":["SUCCESS::调用成功"],"data":{"commonAddresses":[{"divisionId":"310101","city":"上海"}]}}
+                """;
+        when(apiCallUtils.callApiWithRetry(eq(12L), eq(PublishCapabilityProbeService.CATEGORY_API), any(Map.class),
+                any(String.class), eq("2.0"), eq(null), any(Map.class)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, categoryResponse, null, false));
+        when(apiCallUtils.callApiWithRetry(eq(12L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
+                any(String.class), eq("1.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true, locationResponse, null, false));
+
+        PublishCapabilityCheckRespDTO result = service.check(12L,
+                "【直冲自己账号秒到】豆包标准版 标准会员 VIP 30天月");
+
+        assertTrue(result.isPassed());
+        assertEquals("GENERAL_FORM", result.getSupportLevel());
+        assertFalse(result.isSpecialCategory());
+        assertEquals(4, result.getRequiredPropertyCount());
+        assertEquals(0, result.getDependentPropertyCount());
+        assertTrue(result.getPublishWarnings().stream().anyMatch(warning -> warning.contains("虚拟商品")));
+    }
+
+    @Test
     void shouldIdentifyEmptyOptionsAsDependentAndSpecialCategory() {
         XianyuAccount account = new XianyuAccount();
         account.setId(8L);

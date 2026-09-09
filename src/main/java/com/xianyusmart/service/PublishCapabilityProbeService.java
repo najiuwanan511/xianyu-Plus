@@ -269,12 +269,17 @@ public class PublishCapabilityProbeService {
     }
 
     private void enrichCategorySupport(PublishCapabilityCheckRespDTO response, String title) {
-        String categoryText = (text(response.getCategoryName()) + " " + title).toLowerCase();
+        String categoryNameText = text(response.getCategoryName()).toLowerCase();
+        String categoryText = (categoryNameText + " " + title).toLowerCase();
         Set<String> blockedHints = Set.of("枪", "弹药", "毒品", "烟草", "处方药", "野生动物", "身份证", "银行卡");
-        Set<String> specialHints = Set.of("汽车", "摩托", "珠宝", "文玩", "奢侈", "潮鞋", "票", "账号", "装备", "会员", "卡券", "代下单", "跑腿", "服务", "定制");
+        Set<String> strongSpecialHints = Set.of("汽车", "摩托", "珠宝", "文玩", "奢侈", "潮鞋", "装备", "代下单", "跑腿", "定制");
+        Set<String> categoryOnlySpecialHints = Set.of("票", "账号", "服务");
+        Set<String> virtualGoodsHints = Set.of("会员", "卡券", "充值");
 
         boolean blocked = blockedHints.stream().anyMatch(categoryText::contains);
-        boolean special = specialHints.stream().anyMatch(categoryText::contains);
+        boolean special = strongSpecialHints.stream().anyMatch(categoryText::contains)
+                || categoryOnlySpecialHints.stream().anyMatch(categoryNameText::contains);
+        boolean virtualGoods = virtualGoodsHints.stream().anyMatch(categoryText::contains);
         boolean serviceForm = isAssistServiceForm(categoryText, response.getProperties());
         response.setSpecialCategory(special || blocked);
         if (blocked) {
@@ -292,6 +297,9 @@ public class PublishCapabilityProbeService {
         } else {
             response.setSupportLevel("GENERAL_FORM");
             response.setSupportLabel("可使用通用动态表单");
+            if (virtualGoods) {
+                response.getPublishWarnings().add("虚拟商品可使用平台返回的动态表单发布；请确认商品来源、交付说明和有效期符合闲鱼当前规则。");
+            }
         }
 
         int requiredCount = 0;
