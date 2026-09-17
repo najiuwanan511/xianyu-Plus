@@ -4,10 +4,12 @@ import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Playwright;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -16,6 +18,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class PlaywrightManagerTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void desktopBrowserFallbackNamesAreExplicit() {
@@ -52,5 +57,19 @@ class PlaywrightManagerTest {
         assertEquals("chrome", attempts.get(1).channel);
         assertEquals(false, attempts.get(1).headless);
         assertEquals(15_000D, attempts.get(1).timeout);
+    }
+
+    @Test
+    void keepsStableIsolatedBrowserStatePathPerAccount() throws Exception {
+        PlaywrightManager manager = new PlaywrightManager();
+        ReflectionTestUtils.setField(manager, "browserProfileDir", tempDir.toString());
+
+        Path first = manager.profilePath(7L);
+        Path sameAccount = manager.profilePath(7L);
+        Path anotherAccount = manager.profilePath(8L);
+
+        assertEquals(first, sameAccount);
+        assertEquals("account-7.json", first.getFileName().toString());
+        org.junit.jupiter.api.Assertions.assertNotEquals(first, anotherAccount);
     }
 }

@@ -48,6 +48,9 @@ public interface WebSocketTokenService {
     /** Returns true while this account is waiting for a user security check. */
     boolean isCaptchaPending(Long accountId);
 
+    /** Pause every automatic platform request for an account until credentials are updated. */
+    void pauseForVerification(Long accountId, String captchaUrl, String reason);
+
     /** Returns the latest platform verification URL for this account. */
     String getCaptchaUrl(Long accountId);
 

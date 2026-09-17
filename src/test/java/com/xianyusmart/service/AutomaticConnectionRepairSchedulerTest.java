@@ -16,14 +16,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AutomaticConnectionRepairSchedulerTest {
 
     private final XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
-    private final TokenRefreshService tokenRefreshService = mock(TokenRefreshService.class);
     private final WebSocketTokenService webSocketTokenService = mock(WebSocketTokenService.class);
     private final WebSocketService webSocketService = mock(WebSocketService.class);
     private final OperationLogService operationLogService = mock(OperationLogService.class);
@@ -33,7 +31,6 @@ class AutomaticConnectionRepairSchedulerTest {
     void setUp() {
         scheduler = new AutomaticConnectionRepairScheduler(
                 accountMapper,
-                tokenRefreshService,
                 webSocketTokenService,
                 webSocketService,
                 operationLogService,
@@ -61,9 +58,7 @@ class AutomaticConnectionRepairSchedulerTest {
         when(accountMapper.selectList(any())).thenReturn(List.of(first, second));
         when(accountMapper.selectById(1L)).thenReturn(first);
         when(accountMapper.selectById(2L)).thenReturn(second);
-        when(tokenRefreshService.refreshMh5tkToken(any())).thenReturn(true);
-        when(tokenRefreshService.refreshWebSocketToken(any())).thenReturn(true);
-        when(webSocketService.isConnected(any())).thenReturn(true);
+        when(webSocketService.isConnected(any())).thenReturn(false);
         when(webSocketService.startWebSocket(any())).thenReturn(true);
 
         long now = System.currentTimeMillis();
@@ -71,17 +66,28 @@ class AutomaticConnectionRepairSchedulerTest {
         repairTimes().put(2L, now - 1);
 
         scheduler.runDueRepairsAt(now);
-        verify(tokenRefreshService).refreshWebSocketToken(1L);
-        verify(webSocketService).stopWebSocket(1L);
         verify(webSocketService).startWebSocket(1L);
+        verify(webSocketService, never()).stopWebSocket(1L);
 
         scheduler.runDueRepairsAt(now + TimeUnit.MINUTES.toMillis(59));
-        verify(tokenRefreshService, never()).refreshWebSocketToken(2L);
+        verify(webSocketService, never()).startWebSocket(2L);
 
         scheduler.runDueRepairsAt(now + TimeUnit.HOURS.toMillis(1) + TimeUnit.SECONDS.toMillis(1));
-        verify(tokenRefreshService).refreshWebSocketToken(2L);
         verify(webSocketService).startWebSocket(2L);
-        verify(tokenRefreshService, times(2)).refreshWebSocketToken(any());
+    }
+
+    @Test
+    void neverTouchesHealthyConnectedAccount() {
+        XianyuAccount account = account(5L);
+        when(accountMapper.selectList(any())).thenReturn(List.of(account));
+        when(webSocketService.isConnected(5L)).thenReturn(true);
+        long now = System.currentTimeMillis();
+        repairTimes().put(5L, now - 1);
+
+        scheduler.runDueRepairsAt(now);
+
+        verify(webSocketService, never()).stopWebSocket(5L);
+        verify(webSocketService, never()).startWebSocket(5L);
     }
 
     @Test
@@ -94,8 +100,6 @@ class AutomaticConnectionRepairSchedulerTest {
 
         scheduler.runDueRepairsAt(now);
 
-        verify(tokenRefreshService, never()).refreshMh5tkToken(7L);
-        verify(tokenRefreshService, never()).refreshWebSocketToken(7L);
         assertTrue(repairTimes().get(7L) >= now + TimeUnit.HOURS.toMillis(1));
     }
 
@@ -105,7 +109,7 @@ class AutomaticConnectionRepairSchedulerTest {
         when(accountMapper.selectList(any())).thenReturn(List.of(account));
         when(accountMapper.selectById(9L)).thenReturn(account);
         doThrow(new IllegalStateException("temporary failure"))
-                .when(tokenRefreshService).refreshMh5tkToken(9L);
+                .when(webSocketService).startWebSocket(9L);
         long now = System.currentTimeMillis();
         repairTimes().put(9L, now - 1);
 
@@ -116,7 +120,7 @@ class AutomaticConnectionRepairSchedulerTest {
                 org.mockito.ArgumentMatchers.eq(9L),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.contains("自动完整修复异常"),
+                org.mockito.ArgumentMatchers.contains("自动连接恢复异常"),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(),

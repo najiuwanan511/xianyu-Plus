@@ -753,6 +753,13 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
     }
 
     @Override
+    public void pauseForVerification(Long accountId, String captchaUrl, String reason) {
+        if (accountId == null) return;
+        rememberCaptchaRequirement(accountId, captchaUrl,
+                reason == null || reason.isBlank() ? "平台要求安全验证" : reason);
+    }
+
+    @Override
     public String getCaptchaUrl(Long accountId) {
         String url = accountId == null ? null : pendingCaptchaAccounts.get(accountId);
         return url == null || url.isBlank() ? null : url;

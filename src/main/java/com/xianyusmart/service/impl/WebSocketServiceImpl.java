@@ -60,9 +60,6 @@ public class WebSocketServiceImpl implements WebSocketService {
     @Autowired
     private OperationLogService operationLogService;
     
-    @Autowired
-    private com.xianyusmart.service.CookieRefreshService cookieRefreshService;
-
     @Autowired(required = false)
     private com.xianyusmart.service.EmailNotifyService emailNotifyService;
 
@@ -736,27 +733,6 @@ public class WebSocketServiceImpl implements WebSocketService {
         try {
             log.info("【账号{}】开始刷新Token并重连...", accountId);
             
-            // 参考Python: 刷新Token前先从数据库重新加载最新Cookie
-            // 避免使用过期的Cookie导致刷新必然失败
-            try {
-                if (cookieRefreshService != null) {
-                    log.info("【账号{}】刷新Token前先检查Cookie登录状态...", accountId);
-                    // 使用静默检查，不记录操作日志（避免频繁记录）
-                    boolean cookieOk = cookieRefreshService.checkLoginStatusQuietly(accountId);
-                    if (!cookieOk) {
-                        log.warn("【账号{}】Cookie已失效(hasLogin)，触发浏览器兜底刷新Cookie（对齐Python的_refresh_cookies_via_browser）...", accountId);
-                        boolean browserRefreshOk = cookieRefreshService.refreshCookie(accountId);
-                        if (browserRefreshOk) {
-                            log.info("【账号{}】浏览器兜底刷新Cookie成功，继续重连", accountId);
-                        } else {
-                            log.error("【账号{}】hasLogin和浏览器兜底刷新Cookie均失败，Cookie可能已彻底过期", accountId);
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("【账号{}】刷新Token前Cookie检查/兜底刷新异常，继续尝试重连: {}", accountId, e.getMessage());
-            }
-            
             // 停止当前连接
             stopWebSocket(accountId);
             
@@ -873,14 +849,19 @@ public class WebSocketServiceImpl implements WebSocketService {
             connectionRestartFlags.put(accountId, false);
         }
         
-        // 获取/初始化重连次数
+        // 获取/初始化重连次数；达到上限后停止，避免断线状态形成持续请求风暴。
         AtomicInteger attemptCount = reconnectAttemptCounts.computeIfAbsent(accountId, k -> new AtomicInteger(0));
-        
-        // 参考Python: 无限重连，但使用指数退避
         int currentAttempt = attemptCount.incrementAndGet();
-        // 指数退避: 5s, 10s, 20s, 40s, 60s, 60s, ... 最大60秒
-        int actualDelay = isManualRestart ? delaySeconds : 
-                Math.min(delaySeconds * (int) Math.pow(2, Math.min(currentAttempt - 1, 4)), 60);
+        int maxAttempts = Math.max(1, config.getMaxReconnectAttempts());
+        if (!isManualRestart && currentAttempt > maxAttempts) {
+            log.warn("【账号{}】自动重连已达到{}次上限，停止继续请求，等待人工处理或下次启动恢复",
+                    accountId, maxAttempts);
+            triggerWsDisconnectNotify(accountId);
+            return;
+        }
+        int actualDelay = isManualRestart ? delaySeconds :
+                Math.min(delaySeconds * (int) Math.pow(2, Math.min(currentAttempt - 1, 8)),
+                        Math.max(delaySeconds, config.getMaxReconnectDelay()));
         
         log.info("【账号{}】计划{}秒后执行重连（第{}次尝试）...", accountId, actualDelay, currentAttempt);
         
@@ -899,27 +880,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                 // 停止当前连接和心跳
                 stopWebSocket(accountId);
                 
-                // 参考Python: 重连前先刷新Cookie（hasLogin保活）
-                try {
-                    if (cookieRefreshService != null) {
-                        log.info("【账号{}】重连前先检查Cookie登录状态...", accountId);
-                        // 使用静默检查，不记录操作日志（避免频繁记录）
-                        boolean cookieOk = cookieRefreshService.checkLoginStatusQuietly(accountId);
-                        if (!cookieOk) {
-                            log.warn("【账号{}】Cookie已失效(hasLogin)，重连前触发浏览器兜底刷新Cookie（对齐Python）...", accountId);
-                            boolean browserRefreshOk = cookieRefreshService.refreshCookie(accountId);
-                            if (browserRefreshOk) {
-                                log.info("【账号{}】浏览器兜底刷新Cookie成功，继续重连", accountId);
-                            } else {
-                                log.error("【账号{}】hasLogin和浏览器兜底刷新Cookie均失败，重连可能失败", accountId);
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    log.warn("【账号{}】重连前Cookie检查/兜底刷新异常，继续尝试重连: {}", accountId, e.getMessage());
-                }
-                
-                // 重新启动连接
+                // 直接复用当前会话重新连接；只有Token接口真实失败时才进入凭证刷新逻辑。
                 boolean success = startWebSocket(accountId);
                 
                 if (success) {
@@ -952,7 +913,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                         triggerWsDisconnectNotify(accountId);
                     }
                     
-                    // 参考Python: 重连失败后继续尝试（while True循环）
+                    // 限次指数退避，达到上限后停止。
                     scheduleReconnect(accountId, config.getReconnectDelay(), false);
                 }
             } catch (com.xianyusmart.exception.CaptchaRequiredException e) {

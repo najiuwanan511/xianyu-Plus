@@ -47,7 +47,7 @@ public class DeliveryTaskScheduler {
     private final Map<Long, Long> lastStatusReconcileAt = new ConcurrentHashMap<>();
 
     /** Buyer receipt/refund changes do not always arrive as chat events, so keep a low-frequency reconciliation. */
-    private static final long STATUS_RECONCILE_INTERVAL_MS = Duration.ofMinutes(5).toMillis();
+    private static final long STATUS_RECONCILE_INTERVAL_MS = Duration.ofMinutes(15).toMillis();
 
     @Autowired(required = false)
     private OnlineUpdateMaintenanceService onlineUpdateMaintenanceService;

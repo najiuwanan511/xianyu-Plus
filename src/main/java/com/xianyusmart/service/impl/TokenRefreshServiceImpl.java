@@ -31,9 +31,9 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * <p>功能：</p>
  * <ul>
- *   <li>定期刷新_m_h5_tk token（15-20分钟随机间隔，作为兜底机制）</li>
- *   <li>定期Cookie保活检查（15-20分钟随机间隔）</li>
- *   <li>定期刷新websocket_token（每分钟检查，1小时刷新）</li>
+ *   <li>默认只在真实接口失败时刷新_m_h5_tk和Cookie</li>
+ *   <li>可选的Cookie健康检查使用2-4小时随机间隔</li>
+ *   <li>WebSocket Token由连接按数据库真实过期时间调度</li>
  *   <li>监控token过期时间</li>
  *   <li>自动重新获取过期的token</li>
  * </ul>
@@ -41,9 +41,9 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>优化策略（参考Python实现）：</p>
  * <ul>
  *   <li>Python采用"按需刷新"策略：只在token获取失败时才调用hasLogin</li>
- *   <li>Java保留按需刷新，并增加15-20分钟的随机兜底刷新，避免固定节奏</li>
+ *   <li>Java默认仅保留按需刷新，避免主动保活形成高频账号行为</li>
  *   <li>主要依赖token刷新失败时的自动重试机制来触发hasLogin</li>
- *   <li>WebSocket token保持每分钟检查，1小时刷新的策略</li>
+ *   <li>WebSocket Token使用实际过期时间预约刷新，避免重复轮询</li>
  * </ul>
  */
 @Slf4j
@@ -83,7 +83,12 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
 
     @PostConstruct
     public void initRefreshSchedules() {
-        scheduleNextCookieKeepAlive();
+        if (webSocketConfig.isCredentialKeepAliveEnabled()) {
+            scheduleNextCookieKeepAlive();
+        } else {
+            nextCookieKeepAliveTime = Long.MAX_VALUE;
+            log.info("主动Cookie保活已关闭；仅在平台接口真实返回凭证失效时刷新");
+        }
     }
 
     private long randomRefreshDelayMinutes() {
@@ -391,84 +396,40 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
     }
     
     /**
-     * 定时任务：Cookie保活 + _m_h5_tk Token刷新（合并任务）
-     *
-     * 问题背景：
-     * - 原设计有两个独立定时任务：scheduledRefreshMh5tk 和 scheduledCookieKeepAlive
-     * - 两个任务都是15-20分钟随机间隔，存在竞争和时序冲突
-     * - hasLogin成功后，响应Set-Cookie可能不包含_m_h5_tk
-     * - 如果单独刷新_m_h5_tk时Cookie已过期，H5 API不会返回新Token
-     *
-     * 优化策略：
-     * 1. 合并两个任务为单一任务，确保执行顺序
-     * 2. 先执行hasLogin保活，确保Cookie有效
-     * 3. hasLogin成功后，立即使用最新Cookie刷新_m_h5_tk
-     * 4. 如果hasLogin失败，触发浏览器兜底刷新
-     * 5. 使用15-20分钟随机间隔，避免固定周期请求
-     * 6. 添加随机间隔（5-15秒），避免多账号同时请求被识别为机器人
+     * 可选的低频Cookie健康检查。默认关闭；即使显式开启，也只检查登录态，
+     * 不主动刷新Token、不启动浏览器兜底，避免健康账号被周期性改写凭证。
      */
     @Scheduled(fixedDelay = ONE_MINUTE_MS, initialDelay = ONE_MINUTE_MS)
     public void scheduledCookieKeepAlive() {
+        if (!webSocketConfig.isCredentialKeepAliveEnabled()) {
+            return;
+        }
         if (System.currentTimeMillis() < nextCookieKeepAliveTime) {
             return;
         }
         scheduleNextCookieKeepAlive();
         try {
-            log.info("🔄 开始定期Cookie保活 + Token刷新检查...");
+            log.info("开始低频Cookie登录态健康检查...");
 
             List<XianyuAccount> accounts = accountMapper.selectList(null);
             int keepAliveSuccessCount = 0;
-            int tokenRefreshSuccessCount = 0;
             int failCount = 0;
 
             for (XianyuAccount account : accounts) {
-                if (account.getStatus() == 1) {
+                if (account.getStatus() == 1 && !webSocketTokenService.isCaptchaPending(account.getId())) {
                     try {
-                        // 第1步：通过hasLogin保持Cookie活跃
-                        boolean loginOk = cookieRefreshService.checkLoginStatus(account.getId());
-                        
+                        boolean loginOk = cookieRefreshService.checkLoginStatusQuietly(account.getId());
                         if (loginOk) {
                             keepAliveSuccessCount++;
-                            log.debug("【账号{}】hasLogin保活成功", account.getId());
-                            operationLogService.log(account.getId(),
-                                    com.xianyusmart.constants.OperationConstants.Type.UPDATE,
-                                    com.xianyusmart.constants.OperationConstants.Module.COOKIE,
-                                    "hasLogin保活成功",
-                                    com.xianyusmart.constants.OperationConstants.Status.SUCCESS,
-                                    com.xianyusmart.constants.OperationConstants.TargetType.COOKIE,
-                                    String.valueOf(account.getId()),
-                                    null, null, null, null);
-                            
-                            // 第2步：hasLogin成功后，立即刷新_m_h5_tk（使用最新Cookie）
-                            // 关键：必须等hasLogin更新Cookie后，才能获取新Token
-                            boolean tokenOk = refreshMh5tkToken(account.getId());
-                            if (tokenOk) {
-                                tokenRefreshSuccessCount++;
-                                log.info("【账号{}】✅ Cookie保活 + Token刷新成功", account.getId());
-                            } else {
-                                log.warn("【账号{}】⚠️ Cookie保活成功但Token刷新失败", account.getId());
-                            }
+                            log.debug("【账号{}】低频Cookie登录态检查通过", account.getId());
                         } else {
-                            // 第3步兜底：hasLogin失败，触发浏览器刷新Cookie
-                            log.warn("【账号{}】hasLogin保活失败，开始触发浏览器兜底刷新Cookie...", account.getId());
-                            boolean browserRefreshOk = cookieRefreshService.refreshCookie(account.getId());
-                            if (browserRefreshOk) {
-                                keepAliveSuccessCount++;
-                                // 浏览器刷新成功后，也尝试刷新Token
-                                boolean tokenOk = refreshMh5tkToken(account.getId());
-                                if (tokenOk) {
-                                    tokenRefreshSuccessCount++;
-                                }
-                                log.info("【账号{}】浏览器兜底刷新Cookie成功", account.getId());
-                            } else {
-                                failCount++;
-                                log.error("【账号{}】hasLogin和浏览器兜底刷新均失败，Cookie已过期，需手动更新", account.getId());
-                                triggerCookieExpireNotify(account.getId());
-                            }
+                            failCount++;
+                            log.warn("【账号{}】低频Cookie检查未通过；不会主动启动浏览器或刷新Token", account.getId());
+                            triggerCookieExpireNotify(account.getId());
                         }
                     } catch (Exception e) {
                         failCount++;
-                        log.warn("【账号{}】Cookie保活异常: {}", account.getId(), e.getMessage());
+                        log.warn("【账号{}】Cookie健康检查异常: {}", account.getId(), e.getMessage());
                     }
 
                     // 随机间隔5-15秒，避免频繁请求和被识别为机器人
@@ -477,8 +438,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
                 }
             }
 
-            log.info("✅ Cookie保活 + Token刷新完成: 保活成功{}个, Token刷新成功{}个, 失败{}个", 
-                    keepAliveSuccessCount, tokenRefreshSuccessCount, failCount);
+            log.info("Cookie健康检查完成: 正常{}个, 异常{}个", keepAliveSuccessCount, failCount);
 
         } catch (Exception e) {
             log.error("定期Cookie保活检查失败", e);
@@ -495,6 +455,9 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
      */
     @Scheduled(fixedDelay = 60 * 1000, initialDelay = 60 * 1000)
     public void scheduledRefreshWebSocketToken() {
+        if (!webSocketConfig.isTokenRefreshScanEnabled()) {
+            return;
+        }
         try {
             // 与Python完全一致：每分钟检查一次，判断是否需要刷新（1小时）
             log.debug("🔄 检查WebSocket token是否需要刷新...");

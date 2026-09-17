@@ -9,9 +9,12 @@ import com.xianyusmart.entity.XianyuGoodsSkuProperty;
 import com.xianyusmart.entity.XianyuGoodsAutoDeliveryConfig;
 import com.xianyusmart.entity.XianyuGoodsConfig;
 import com.xianyusmart.entity.XianyuKamiConfig;
+import com.xianyusmart.entity.XianyuAccount;
+import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.mapper.XianyuGoodsInfoMapper;
 import com.xianyusmart.mapper.XianyuKamiConfigMapper;
 import com.xianyusmart.service.ItemService;
+import com.xianyusmart.service.WebSocketTokenService;
 import com.xianyusmart.utils.XianyuApiUtils;
 import com.xianyusmart.utils.XianyuApiCallUtils;
 import com.xianyusmart.utils.XianyuSignUtils;
@@ -63,12 +66,26 @@ public class ItemServiceImpl implements ItemService {
     @Autowired
     private XianyuApiCallUtils xianyuApiCallUtils;
 
+    @Autowired
+    private WebSocketTokenService webSocketTokenService;
+
+    @Autowired
+    private XianyuAccountMapper accountMapper;
+
     /**
      * 获取指定页的商品信息（内部方法）
      */
     private ResultObject<ItemListRespDTO> getItemList(ItemListReqDTO reqDTO) {
         try {
             log.info("开始获取商品列表: {}", reqDTO);
+
+            Long requestAccountId = getAccountIdFromCookieId(reqDTO.getCookieId());
+            XianyuAccount requestAccount = requestAccountId == null
+                    ? null : accountMapper.selectById(requestAccountId);
+            if (requestAccountId != null && (webSocketTokenService.isCaptchaPending(requestAccountId)
+                    || (requestAccount != null && Integer.valueOf(-2).equals(requestAccount.getStatus())))) {
+                return ResultObject.failed("账号正在等待安全验证，商品同步请求已暂停");
+            }
 
             // 从数据库获取Cookie
             String cookiesStr = getCookieFromDb(reqDTO.getCookieId());
@@ -109,6 +126,10 @@ public class ItemServiceImpl implements ItemService {
             if (response == null) {
                 log.error("API调用失败：响应为空");
                 return ResultObject.failed("请求闲鱼API失败");
+            }
+            if (requestAccountId != null && isVerificationResponse(response)) {
+                webSocketTokenService.pauseForVerification(requestAccountId, null, "商品列表接口要求安全验证");
+                return ResultObject.failed("闲鱼要求安全验证，商品同步请求已暂停");
             }
             
             log.info("API调用成功，响应长度: {}", response.length());
@@ -167,6 +188,11 @@ public class ItemServiceImpl implements ItemService {
             log.error("获取商品列表异常: cookieId={}", reqDTO.getCookieId(), e);
             return ResultObject.failed("获取商品列表异常: " + e.getMessage());
         }
+    }
+
+    private boolean isVerificationResponse(String response) {
+        return response != null && (response.contains("FAIL_SYS_USER_VALIDATE")
+                || response.contains("RGV587_ERROR") || response.contains("FAIL_SYS_RGV587_ERROR"));
     }
 
     @Override

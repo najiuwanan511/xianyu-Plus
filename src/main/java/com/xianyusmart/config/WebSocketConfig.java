@@ -31,17 +31,22 @@ public class WebSocketConfig {
      */
     private int tokenRetryInterval = 300;
 
+    /** 是否启用主动 Cookie 健康检查。默认关闭，凭证只在真实失败时刷新。 */
+    private boolean credentialKeepAliveEnabled = false;
+
+    /** 是否启用旧的每分钟 Token 到期扫描。默认关闭，由连接按真实到期时间调度。 */
+    private boolean tokenRefreshScanEnabled = false;
+
     /**
-     * 凭证刷新最小间隔（分钟）
-     * 用于Cookie保活和_m_h5_tk兜底刷新
+     * 主动 Cookie 健康检查最小间隔（分钟）。仅在显式启用时使用。
      */
-    private int credentialRefreshMinMinutes = 15;
+    private int credentialRefreshMinMinutes = 120;
 
     /**
      * 凭证刷新最大间隔（分钟）
      * 用于Cookie保活和_m_h5_tk兜底刷新
      */
-    private int credentialRefreshMaxMinutes = 20;
+    private int credentialRefreshMaxMinutes = 240;
     
     /**
      * 消息过期时间（毫秒）
@@ -71,12 +76,15 @@ public class WebSocketConfig {
      * 连接重连延迟（秒）
      * 参考Python: 5秒
      */
-    private int reconnectDelay = 5;
+    private int reconnectDelay = 15;
+
+    /** 自动重连最大退避秒数。 */
+    private int maxReconnectDelay = 300;
     
     /**
      * 最大重连次数
      */
-    private int maxReconnectAttempts = 10;
+    private int maxReconnectAttempts = 5;
     
     /**
      * 消息发送重试次数

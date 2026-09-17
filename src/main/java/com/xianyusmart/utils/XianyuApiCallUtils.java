@@ -1,6 +1,9 @@
 package com.xianyusmart.utils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xianyusmart.entity.XianyuAccount;
+import com.xianyusmart.mapper.XianyuAccountMapper;
+import com.xianyusmart.service.WebSocketTokenService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -22,6 +25,12 @@ public class XianyuApiCallUtils {
     
     @Autowired
     private com.xianyusmart.service.AccountService accountService;
+
+    @Autowired
+    private XianyuAccountMapper accountMapper;
+
+    @Autowired
+    private WebSocketTokenService webSocketTokenService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -83,6 +92,10 @@ public class XianyuApiCallUtils {
                                            Map<String, String> extraHeaders,
                                            Map<String, String> extraQueryParams,
                                            int retryCount) {
+        if (isVerificationPaused(accountId)) {
+            log.info("【账号{}】正在等待安全验证，已阻止平台API请求: {}", accountId, apiName);
+            return new ApiCallResult(false, null, "账号正在等待安全验证，自动请求已暂停", false);
+        }
         try {
             XianyuApiUtils.ApiCallResultWithHeaders result = XianyuApiUtils.callApiWithHeaders(
                     apiName, dataMap, cookiesStr, endpointVersion, null, null,
@@ -169,6 +182,8 @@ public class XianyuApiCallUtils {
             // 6. 检查是否触发风控
             if (isRiskControl(retCode)) {
                 log.error("【账号{}】触发风控: {}", accountId, retCode);
+                webSocketTokenService.pauseForVerification(accountId, null,
+                        "平台API返回风控验证：" + apiName);
                 return new ApiCallResult(false, response, "触发风控，需要人工处理", false);
             }
 
@@ -276,6 +291,18 @@ public class XianyuApiCallUtils {
         return retCode.contains("RGV587_ERROR") ||
                retCode.contains("被挤爆啦") ||
                retCode.contains("FAIL_SYS_USER_VALIDATE");
+    }
+
+    private boolean isVerificationPaused(Long accountId) {
+        if (accountId == null) return false;
+        if (webSocketTokenService.isCaptchaPending(accountId)) return true;
+        try {
+            XianyuAccount account = accountMapper.selectById(accountId);
+            return account != null && Integer.valueOf(-2).equals(account.getStatus());
+        } catch (Exception exception) {
+            log.warn("【账号{}】读取验证暂停状态失败，本次按安全策略阻止平台请求", accountId);
+            return true;
+        }
     }
     
     /**

@@ -225,7 +225,8 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                 boolean isRiskControl = responseBody != null && (
                     responseBody.contains("RGV587_ERROR") ||
                     responseBody.contains("被挤爆啦") ||
-                    responseBody.contains("FAIL_SYS_RGV587_ERROR"));
+                    responseBody.contains("FAIL_SYS_RGV587_ERROR") ||
+                    responseBody.contains("FAIL_SYS_USER_VALIDATE"));
 
                 if (isRiskControl) {
                     log.error("【账号{}】❌ hasLogin触发风控（响应内容已隐藏）", accountId);
@@ -237,6 +238,7 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                                     .eq(XianyuCookie::getXianyuAccountId, accountId)
                                     .set(XianyuCookie::getCookieStatus, 3) // 3表示失效（风控）
                     );
+                    markAccountAsCookieRefreshAbnormal(accountId, "hasLogin触发平台安全验证");
 
                     // 记录操作日志
                     operationLogService.log(accountId,
@@ -482,39 +484,43 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
             Map<String, String> originalCookies = XianyuSignUtils.parseCookies(cookie.getCookieText());
             String previousX5Sec = findCookieIgnoreCase(originalCookies, "x5sec");
 
-            try (BrowserContext context = playwrightManager.createContext()) {
-                context.addCookies(buildBrowserCookies(originalCookies));
-                Page page = context.newPage();
+            try (BrowserContext context = playwrightManager.createContext(accountId)) {
                 try {
-                    page.navigate(verificationUrl,
-                            new Page.NavigateOptions()
-                                    .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
-                                    .setTimeout(TimeUnit.SECONDS.toMillis(Math.max(10, captchaTimeoutSeconds))));
-                } catch (Exception navigateError) {
-                    // 验证页经常在滑块完成后主动终止导航；仍继续轮询浏览器 Cookie。
-                    log.debug("【账号{}】安全验证页面导航未正常结束，继续等待 Cookie: {}",
-                            accountId, navigateError.getMessage());
-                }
-
-                long deadline = System.currentTimeMillis()
-                        + TimeUnit.SECONDS.toMillis(Math.max(10, captchaTimeoutSeconds));
-                while (System.currentTimeMillis() < deadline) {
-                    Map<String, String> browserCookies = readBrowserCookies(context);
-                    String currentX5Sec = findCookieIgnoreCase(browserCookies, "x5sec");
-                    if (currentX5Sec != null && !currentX5Sec.isBlank()
-                            && !currentX5Sec.equals(previousX5Sec)) {
-                        Map<String, String> mergedCookies = new LinkedHashMap<>(originalCookies);
-                        browserCookies.forEach((name, value) -> {
-                            if (name.toLowerCase(Locale.ROOT).startsWith("x5")) {
-                                mergedCookies.put(name, value);
-                            }
-                        });
-                        removeCaptchaChallengeCookies(mergedCookies);
-                        persistCaptchaCookies(accountId, mergedCookies);
-                        log.info("【账号{}】安全验证完成，已回收新的 x5sec Cookie", accountId);
-                        return true;
+                    context.addCookies(buildBrowserCookies(originalCookies));
+                    Page page = context.newPage();
+                    try {
+                        page.navigate(verificationUrl,
+                                new Page.NavigateOptions()
+                                        .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
+                                        .setTimeout(TimeUnit.SECONDS.toMillis(Math.max(10, captchaTimeoutSeconds))));
+                    } catch (Exception navigateError) {
+                        // 验证页经常在滑块完成后主动终止导航；仍继续轮询浏览器 Cookie。
+                        log.debug("【账号{}】安全验证页面导航未正常结束，继续等待 Cookie: {}",
+                                accountId, navigateError.getMessage());
                     }
-                    Thread.sleep(CAPTCHA_POLL_INTERVAL_MS);
+
+                    long deadline = System.currentTimeMillis()
+                            + TimeUnit.SECONDS.toMillis(Math.max(10, captchaTimeoutSeconds));
+                    while (System.currentTimeMillis() < deadline) {
+                        Map<String, String> browserCookies = readBrowserCookies(context);
+                        String currentX5Sec = findCookieIgnoreCase(browserCookies, "x5sec");
+                        if (currentX5Sec != null && !currentX5Sec.isBlank()
+                                && !currentX5Sec.equals(previousX5Sec)) {
+                            Map<String, String> mergedCookies = new LinkedHashMap<>(originalCookies);
+                            browserCookies.forEach((name, value) -> {
+                                if (name.toLowerCase(Locale.ROOT).startsWith("x5")) {
+                                    mergedCookies.put(name, value);
+                                }
+                            });
+                            removeCaptchaChallengeCookies(mergedCookies);
+                            persistCaptchaCookies(accountId, mergedCookies);
+                            log.info("【账号{}】安全验证完成，已回收新的 x5sec Cookie", accountId);
+                            return true;
+                        }
+                        Thread.sleep(CAPTCHA_POLL_INTERVAL_MS);
+                    }
+                } finally {
+                    playwrightManager.saveContext(accountId, context);
                 }
             }
 
@@ -626,58 +632,62 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
         lastBrowserRefreshTime.put(accountId, System.currentTimeMillis());
 
-        try (BrowserContext context = playwrightManager.createContext()) {
-            List<Cookie> browserCookies = buildBrowserCookies(existingCookies);
-            context.addCookies(browserCookies);
+        try (BrowserContext context = playwrightManager.createContext(accountId)) {
+            try {
+                List<Cookie> browserCookies = buildBrowserCookies(existingCookies);
+                context.addCookies(browserCookies);
 
-            Page page = context.newPage();
-            log.info("【账号{}】浏览器兜底刷新Cookie，开始访问 {}", accountId, GOOFISH_IM_URL);
-            page.navigate(GOOFISH_IM_URL,
-                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-            page.reload(new Page.ReloadOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                Page page = context.newPage();
+                log.info("【账号{}】浏览器兜底刷新Cookie，开始访问 {}", accountId, GOOFISH_IM_URL);
+                page.navigate(GOOFISH_IM_URL,
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                page.reload(new Page.ReloadOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
-            List<Cookie> refreshedCookies = context.cookies(List.of(
-                    GOOFISH_IM_URL,
-                    "https://passport.goofish.com",
-                    "https://h5api.m.goofish.com",
-                    "https://www.taobao.com"
-            ));
-            String refreshedCookieText = buildCookieText(refreshedCookies);
-            if (refreshedCookieText.isBlank()) {
-                log.warn("【账号{}】浏览器兜底刷新未获取到新的Cookie", accountId);
-                markAccountAsCookieRefreshAbnormal(accountId, "浏览器兜底刷新失败：浏览器未返回Cookie");
+                List<Cookie> refreshedCookies = context.cookies(List.of(
+                        GOOFISH_IM_URL,
+                        "https://passport.goofish.com",
+                        "https://h5api.m.goofish.com",
+                        "https://www.taobao.com"
+                ));
+                String refreshedCookieText = buildCookieText(refreshedCookies);
+                if (refreshedCookieText.isBlank()) {
+                    log.warn("【账号{}】浏览器兜底刷新未获取到新的Cookie", accountId);
+                    markAccountAsCookieRefreshAbnormal(accountId, "浏览器兜底刷新失败：浏览器未返回Cookie");
+                    operationLogService.log(accountId,
+                            OperationConstants.Type.REFRESH,
+                            OperationConstants.Module.COOKIE,
+                            "浏览器兜底刷新Cookie失败，账号已标记为异常待处理",
+                            OperationConstants.Status.FAIL,
+                            OperationConstants.TargetType.COOKIE,
+                            String.valueOf(accountId),
+                            null, null, "浏览器未返回Cookie", null);
+                    return false;
+                }
+
+                Map<String, String> refreshedCookieMap = XianyuSignUtils.parseCookies(refreshedCookieText);
+                String newMh5Tk = refreshedCookieMap.get("_m_h5_tk");
+
+                cookieMapper.update(null,
+                        new LambdaUpdateWrapper<XianyuCookie>()
+                                .eq(XianyuCookie::getXianyuAccountId, accountId)
+                                .set(XianyuCookie::getCookieText, refreshedCookieText)
+                                .set(XianyuCookie::getCookieStatus, 1)
+                                .set(newMh5Tk != null && !newMh5Tk.isBlank(), XianyuCookie::getMH5Tk, newMh5Tk)
+                );
+
+                log.info("【账号{}】浏览器兜底刷新Cookie成功，Cookie长度: {}", accountId, refreshedCookieText.length());
                 operationLogService.log(accountId,
                         OperationConstants.Type.REFRESH,
                         OperationConstants.Module.COOKIE,
-                        "浏览器兜底刷新Cookie失败，账号已标记为异常待处理",
-                        OperationConstants.Status.FAIL,
+                        "浏览器兜底刷新Cookie成功",
+                        OperationConstants.Status.SUCCESS,
                         OperationConstants.TargetType.COOKIE,
                         String.valueOf(accountId),
-                        null, null, "浏览器未返回Cookie", null);
-                return false;
+                        null, null, null, null);
+                return true;
+            } finally {
+                playwrightManager.saveContext(accountId, context);
             }
-
-            Map<String, String> refreshedCookieMap = XianyuSignUtils.parseCookies(refreshedCookieText);
-            String newMh5Tk = refreshedCookieMap.get("_m_h5_tk");
-
-            cookieMapper.update(null,
-                    new LambdaUpdateWrapper<XianyuCookie>()
-                            .eq(XianyuCookie::getXianyuAccountId, accountId)
-                            .set(XianyuCookie::getCookieText, refreshedCookieText)
-                            .set(XianyuCookie::getCookieStatus, 1)
-                            .set(newMh5Tk != null && !newMh5Tk.isBlank(), XianyuCookie::getMH5Tk, newMh5Tk)
-            );
-
-            log.info("【账号{}】浏览器兜底刷新Cookie成功，Cookie长度: {}", accountId, refreshedCookieText.length());
-            operationLogService.log(accountId,
-                    OperationConstants.Type.REFRESH,
-                    OperationConstants.Module.COOKIE,
-                    "浏览器兜底刷新Cookie成功",
-                    OperationConstants.Status.SUCCESS,
-                    OperationConstants.TargetType.COOKIE,
-                    String.valueOf(accountId),
-                    null, null, null, null);
-            return true;
         } catch (Exception e) {
             log.error("【账号{}】浏览器兜底刷新Cookie失败", accountId, e);
             markAccountAsCookieRefreshAbnormal(accountId, "浏览器兜底刷新异常: " + e.getMessage());

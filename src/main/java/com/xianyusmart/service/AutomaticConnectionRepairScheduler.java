@@ -22,13 +22,12 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Periodically performs the same complete credential repair as the manual repair button. */
+/** Optional low-frequency recovery for disconnected accounts. Healthy connections are never touched. */
 @Slf4j
 @Component
 public class AutomaticConnectionRepairScheduler {
 
     private final XianyuAccountMapper accountMapper;
-    private final TokenRefreshService tokenRefreshService;
     private final WebSocketTokenService webSocketTokenService;
     private final WebSocketService webSocketService;
     private final OperationLogService operationLogService;
@@ -40,7 +39,7 @@ public class AutomaticConnectionRepairScheduler {
     @Autowired(required = false)
     private OnlineUpdateMaintenanceService onlineUpdateMaintenanceService;
 
-    @Value("${app.websocket.automatic-repair.enabled:true}")
+    @Value("${app.websocket.automatic-repair.enabled:false}")
     private boolean enabled;
 
     @Value("${app.websocket.automatic-repair.min-hours:5}")
@@ -55,14 +54,12 @@ public class AutomaticConnectionRepairScheduler {
     private volatile long lastRepairStartedAt;
 
     public AutomaticConnectionRepairScheduler(XianyuAccountMapper accountMapper,
-                                               TokenRefreshService tokenRefreshService,
                                                WebSocketTokenService webSocketTokenService,
                                                WebSocketService webSocketService,
                                                OperationLogService operationLogService,
                                                CredentialUpdateCoordinator credentialUpdateCoordinator,
                                                @Qualifier("taskExecutor") Executor taskExecutor) {
         this.accountMapper = accountMapper;
-        this.tokenRefreshService = tokenRefreshService;
         this.webSocketTokenService = webSocketTokenService;
         this.webSocketService = webSocketService;
         this.operationLogService = operationLogService;
@@ -98,6 +95,7 @@ public class AutomaticConnectionRepairScheduler {
 
         XianyuAccount dueAccount = accounts.stream()
                 .filter(account -> account.getId() != null)
+                .filter(account -> !webSocketService.isConnected(account.getId()))
                 .filter(account -> nextRepairTimes.getOrDefault(account.getId(), Long.MAX_VALUE) <= now)
                 .min(Comparator
                         .comparingLong((XianyuAccount account) -> nextRepairTimes.get(account.getId()))
@@ -110,7 +108,7 @@ public class AutomaticConnectionRepairScheduler {
         Long accountId = dueAccount.getId();
         if (webSocketTokenService.isCaptchaPending(accountId)) {
             nextRepairTimes.put(accountId, now + spacingMillis);
-            log.info("【自动完整修复】账号 {} 正在等待安全验证，本次跳过", accountId);
+            log.info("【自动连接恢复】账号 {} 正在等待安全验证，本次跳过", accountId);
             return;
         }
 
@@ -121,7 +119,7 @@ public class AutomaticConnectionRepairScheduler {
         try {
             taskExecutor.execute(() -> executeAndReschedule(accountId, now));
         } catch (Exception exception) {
-            log.error("【自动完整修复】账号 {} 无法进入后台执行队列", accountId, exception);
+            log.error("【自动连接恢复】账号 {} 无法进入后台执行队列", accountId, exception);
             nextRepairTimes.put(accountId, now + TimeUnit.MINUTES.toMillis(5));
             repairRunning.set(false);
         }
@@ -131,20 +129,20 @@ public class AutomaticConnectionRepairScheduler {
         lastRepairStartedAt = System.currentTimeMillis();
         try {
             if (onlineUpdateMaintenanceService != null && onlineUpdateMaintenanceService.isActive()) {
-                log.info("【自动完整修复】系统正在在线更新，账号 {} 本次延后", accountId);
+                log.info("【自动连接恢复】系统正在在线更新，账号 {} 本次延后", accountId);
                 return;
             }
             XianyuAccount account = accountMapper.selectById(accountId);
             if (account == null || !Integer.valueOf(1).equals(account.getStatus())
                     || webSocketTokenService.isCaptchaPending(accountId)) {
-                log.info("【自动完整修复】账号 {} 已禁用、不存在或正在等待安全验证，本次取消", accountId);
+                log.info("【自动连接恢复】账号 {} 已禁用、不存在或正在等待安全验证，本次取消", accountId);
                 return;
             }
-            performCompleteRepair(accountId);
+            recoverDisconnectedAccount(accountId);
         } catch (Exception exception) {
-            log.error("【自动完整修复】账号 {} 执行异常", accountId, exception);
+            log.error("【自动连接恢复】账号 {} 执行异常", accountId, exception);
             recordResult(accountId, OperationConstants.Status.FAIL,
-                    "自动完整修复异常：" + safeMessage(exception), System.currentTimeMillis());
+                    "自动连接恢复异常：" + safeMessage(exception), System.currentTimeMillis());
         } finally {
             long completedAt = Math.max(scheduledAt, System.currentTimeMillis());
             nextRepairTimes.put(accountId, completedAt + randomRepairDelayMillis());
@@ -152,28 +150,21 @@ public class AutomaticConnectionRepairScheduler {
         }
     }
 
-    private void performCompleteRepair(Long accountId) {
+    private void recoverDisconnectedAccount(Long accountId) {
         long startedAt = System.currentTimeMillis();
         credentialUpdateCoordinator.withAccountLock(accountId, () -> {
-            log.info("【自动完整修复】账号 {} 开始执行 H5 Token、WebSocket Token 刷新和重连", accountId);
-            boolean h5TokenRefreshed = tokenRefreshService.refreshMh5tkToken(accountId);
-            boolean webSocketTokenRefreshed = tokenRefreshService.refreshWebSocketToken(accountId);
-            if (!webSocketTokenRefreshed || webSocketTokenService.isCaptchaPending(accountId)) {
-                recordResult(accountId, OperationConstants.Status.FAIL,
-                        "自动完整修复未完成：Token 刷新失败或需要安全验证", startedAt);
+            if (webSocketService.isConnected(accountId)) {
+                log.debug("【自动连接恢复】账号 {} 已在线，不刷新凭证也不重连", accountId);
                 return;
             }
-
-            if (webSocketService.isConnected(accountId)) {
-                webSocketService.stopWebSocket(accountId);
+            if (webSocketTokenService.isCaptchaPending(accountId)) {
+                log.info("【自动连接恢复】账号 {} 正在等待安全验证，本次取消", accountId);
+                return;
             }
+            log.info("【自动连接恢复】账号 {} 尝试复用现有Cookie与Token恢复连接", accountId);
             boolean connected = webSocketService.startWebSocket(accountId);
-            int status = connected
-                    ? (h5TokenRefreshed ? OperationConstants.Status.SUCCESS : OperationConstants.Status.PARTIAL)
-                    : OperationConstants.Status.FAIL;
-            String description = connected
-                    ? (h5TokenRefreshed ? "自动完整修复成功" : "自动完整修复部分成功：H5 Token 刷新失败")
-                    : "自动完整修复失败：WebSocket 未能重新连接";
+            int status = connected ? OperationConstants.Status.SUCCESS : OperationConstants.Status.FAIL;
+            String description = connected ? "自动连接恢复成功（复用现有凭证）" : "自动连接恢复失败：未强制刷新凭证";
             recordResult(accountId, status, description, startedAt);
         });
     }
@@ -192,9 +183,9 @@ public class AutomaticConnectionRepairScheduler {
                 status == OperationConstants.Status.FAIL ? description : null,
                 durationMs);
         if (status == OperationConstants.Status.SUCCESS) {
-            log.info("【自动完整修复】账号 {} 修复成功", accountId);
+            log.info("【自动连接恢复】账号 {} 恢复成功", accountId);
         } else {
-            log.warn("【自动完整修复】账号 {} 处理结果：{}", accountId, description);
+            log.warn("【自动连接恢复】账号 {} 处理结果：{}", accountId, description);
         }
     }
 

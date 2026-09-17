@@ -169,11 +169,16 @@ sudo ./deploy/self-update/install-online-update.sh
 - H5 Token 用于部分网页接口能力。
 - 凭证过期或自动续期结果可在账号详情查看；配置通知渠道后，异常与更新结果会推送提醒。
 
-当平台返回 `FAIL_SYS_USER_VALIDATE` 时，系统会为触发验证的账号创建独立浏览器 Context，
+当平台返回 `FAIL_SYS_USER_VALIDATE` 时，系统会立即把该账号置为待验证，停止业务 API、Token 刷新和 WebSocket 重连，
+避免验证状态下继续请求。每个账号使用独立且持久化的浏览器存储状态、固定 User-Agent、时区和窗口尺寸；
 完成滑块后只回写该账号的新 `x5sec` Cookie，不会与其他账号共享 Cookie 或设备状态。
 桌面部署可在 `.env` 中设置 `CAPTCHA_BROWSER_HEADLESS=false`，容器部署默认保持无头并使用手动 Cookie 更新兜底；
 独立 JAR 没有安装 Playwright Chromium 时会自动尝试系统 Chrome 和 Edge；
 `CAPTCHA_BROWSER_MAX_CONCURRENT` 控制同时处理的验证数量，默认一次一个账号。
+
+默认保活策略为按需刷新：不再每 15～20 分钟调用 `hasLogin`，不再每 5～8 小时强制刷新并断开在线连接；
+WebSocket Token 仅按平台返回的真实过期时间提前刷新，异常断线最多退避重连 5 次。离线订单仅每 10 分钟补偿一次，
+在线账号仍由实时事件驱动。部署后还应尽量保持固定公网出口 IP，避免服务器、电脑和手机在短时间内跨地区切换同一账号。
 
 飞牛 OS 只使用 Docker 时，可开启容器内远程浏览器验证：
 

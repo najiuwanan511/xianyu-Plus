@@ -32,6 +32,9 @@ public class PlaywrightManager {
     @Value("${app.captcha.remote-enabled:false}")
     private boolean remoteBrowserEnabled;
 
+    @Value("${app.captcha.profile-dir:./data/browser-profiles}")
+    private String browserProfileDir;
+
     private static final String BROWSER_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -74,21 +77,19 @@ public class PlaywrightManager {
     }
 
     public BrowserContext createContext() {
+        return createContext(null);
+    }
+
+    public BrowserContext createContext(Long accountId) {
         lock.lock();
         try {
             ensureBrowserReady();
-            Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                    .setUserAgent(BROWSER_USER_AGENT)
-                    .setLocale("zh-CN");
-            return browser.newContext(contextOptions);
+            return browser.newContext(contextOptions(accountId));
         } catch (Exception e) {
             log.error("创建BrowserContext失败，尝试重建浏览器实例", e);
             try {
                 rebuild();
-                Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                        .setUserAgent(BROWSER_USER_AGENT)
-                        .setLocale("zh-CN");
-                return browser.newContext(contextOptions);
+                return browser.newContext(contextOptions(accountId));
             } catch (Exception ex) {
                 log.error("重建浏览器后仍然失败", ex);
                 throw new RuntimeException("Playwright浏览器不可用", ex);
@@ -96,6 +97,39 @@ public class PlaywrightManager {
         } finally {
             lock.unlock();
         }
+    }
+
+    private Browser.NewContextOptions contextOptions(Long accountId) throws Exception {
+        Browser.NewContextOptions options = new Browser.NewContextOptions()
+                .setUserAgent(BROWSER_USER_AGENT)
+                .setLocale("zh-CN")
+                .setTimezoneId("Asia/Shanghai")
+                .setViewportSize(1365, 768);
+        if (accountId != null) {
+            Path profilePath = profilePath(accountId);
+            if (Files.isRegularFile(profilePath)) {
+                options.setStorageStatePath(profilePath);
+                log.debug("【账号{}】加载持久化浏览器环境", accountId);
+            }
+        }
+        return options;
+    }
+
+    public void saveContext(Long accountId, BrowserContext context) {
+        if (accountId == null || context == null) return;
+        try {
+            Path profilePath = profilePath(accountId);
+            context.storageState(new BrowserContext.StorageStateOptions().setPath(profilePath));
+            log.debug("【账号{}】浏览器环境已持久化", accountId);
+        } catch (Exception exception) {
+            log.warn("【账号{}】保存浏览器环境失败: {}", accountId, exception.getMessage());
+        }
+    }
+
+    Path profilePath(Long accountId) throws Exception {
+        Path root = Paths.get(browserProfileDir).toAbsolutePath().normalize();
+        Files.createDirectories(root);
+        return root.resolve("account-" + accountId + ".json");
     }
 
     private void ensureBrowserReady() {

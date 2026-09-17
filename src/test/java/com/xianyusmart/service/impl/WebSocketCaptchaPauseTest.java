@@ -4,7 +4,6 @@ import com.xianyusmart.config.WebSocketConfig;
 import com.xianyusmart.entity.XianyuAccount;
 import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.exception.CaptchaRequiredException;
-import com.xianyusmart.service.CookieRefreshService;
 import com.xianyusmart.service.WebSocketTokenService;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -51,7 +50,6 @@ class WebSocketCaptchaPauseTest {
     void captchaExceptionDoesNotScheduleFiveMinuteRetry() {
         WebSocketServiceImpl service = org.mockito.Mockito.spy(new WebSocketServiceImpl());
         WebSocketTokenService tokenService = mock(WebSocketTokenService.class);
-        CookieRefreshService cookieRefreshService = mock(CookieRefreshService.class);
         ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
         XianyuAccount account = new XianyuAccount();
@@ -62,7 +60,6 @@ class WebSocketCaptchaPauseTest {
 
         when(tokenService.isCaptchaPending(7L)).thenReturn(false);
         when(tokenService.isSessionRenewalPending(7L)).thenReturn(false);
-        when(cookieRefreshService.checkLoginStatusQuietly(7L)).thenReturn(true);
         when(config.getTokenRetryInterval()).thenReturn(300);
         doReturn(false).when(service).stopWebSocket(7L);
         doThrow(new CaptchaRequiredException("https://h5api.m.goofish.com/punish"))
@@ -70,7 +67,6 @@ class WebSocketCaptchaPauseTest {
 
         ReflectionTestUtils.setField(service, "tokenService", tokenService);
         ReflectionTestUtils.setField(service, "xianyuAccountMapper", accountMapper);
-        ReflectionTestUtils.setField(service, "cookieRefreshService", cookieRefreshService);
         ReflectionTestUtils.setField(service, "webSocketScheduler", scheduler);
         ReflectionTestUtils.setField(service, "config", config);
 

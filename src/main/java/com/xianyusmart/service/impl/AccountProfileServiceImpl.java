@@ -7,13 +7,16 @@ import com.xianyusmart.entity.XianyuCookie;
 import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.mapper.XianyuCookieMapper;
 import com.xianyusmart.service.AccountProfileService;
+import com.xianyusmart.service.WebSocketTokenService;
 import com.xianyusmart.utils.XianyuApiUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.net.URI;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -29,6 +32,9 @@ public class AccountProfileServiceImpl implements AccountProfileService {
     private final XianyuAccountMapper accountMapper;
     private final XianyuCookieMapper cookieMapper;
     private final ObjectMapper objectMapper;
+
+    @Autowired(required = false)
+    private WebSocketTokenService webSocketTokenService;
 
     public AccountProfileServiceImpl(XianyuAccountMapper accountMapper,
                                      XianyuCookieMapper cookieMapper,
@@ -48,6 +54,10 @@ public class AccountProfileServiceImpl implements AccountProfileService {
         if (account == null) {
             return null;
         }
+        if (Integer.valueOf(-2).equals(account.getStatus())
+                || (webSocketTokenService != null && webSocketTokenService.isCaptchaPending(accountId))) {
+            return account.getAvatarUrl();
+        }
 
         String cookieText = getValidCookie(accountId);
         if (cookieText == null || cookieText.isBlank()) {
@@ -62,8 +72,12 @@ public class AccountProfileServiceImpl implements AccountProfileService {
                     cookieText
             );
             if (!XianyuApiUtils.isSuccess(response)) {
+                String error = XianyuApiUtils.extractError(response);
+                if (isVerificationRequired(error) && webSocketTokenService != null) {
+                    webSocketTokenService.pauseForVerification(accountId, null, "账号资料接口要求安全验证");
+                }
                 log.info("账号头像未刷新：闲鱼资料接口未返回成功，accountId={}, reason={}",
-                        accountId, XianyuApiUtils.extractError(response));
+                        accountId, error);
                 return account.getAvatarUrl();
             }
 
@@ -86,6 +100,12 @@ public class AccountProfileServiceImpl implements AccountProfileService {
             log.info("账号头像获取失败，继续使用文字头像，accountId={}", accountId, e);
             return account.getAvatarUrl();
         }
+    }
+
+    private boolean isVerificationRequired(String message) {
+        if (message == null) return false;
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.contains("fail_sys_user_validate") || normalized.contains("rgv587_error");
     }
 
     private String getValidCookie(Long accountId) {

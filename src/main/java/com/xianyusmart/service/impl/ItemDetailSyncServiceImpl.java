@@ -12,11 +12,14 @@ import com.xianyusmart.controller.dto.SyncProgressRespDTO;
 import com.xianyusmart.controller.dto.SyncSingleItemRespDTO;
 import com.xianyusmart.entity.XianyuGoodsSku;
 import com.xianyusmart.entity.XianyuGoodsSkuProperty;
+import com.xianyusmart.entity.XianyuAccount;
+import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.service.AccountService;
 import com.xianyusmart.service.GoodsInfoService;
 import com.xianyusmart.service.GoodsSkuService;
 import com.xianyusmart.service.GoodsSkuPropertyService;
 import com.xianyusmart.service.ItemDetailSyncService;
+import com.xianyusmart.service.WebSocketTokenService;
 import com.xianyusmart.utils.ItemDetailUtils;
 import com.xianyusmart.utils.XianyuApiUtils;
 import com.xianyusmart.utils.XianyuSignUtils;
@@ -56,6 +59,12 @@ public class ItemDetailSyncServiceImpl implements ItemDetailSyncService {
 
     @Autowired
     private PlaywrightManager playwrightManager;
+
+    @Autowired
+    private WebSocketTokenService webSocketTokenService;
+
+    @Autowired
+    private XianyuAccountMapper accountMapper;
 
     @Autowired
     @Lazy
@@ -107,6 +116,16 @@ public class ItemDetailSyncServiceImpl implements ItemDetailSyncService {
 
         progressMap.put(syncId, progress);
         accountSyncMap.put(accountId, syncId);
+
+        if (isVerificationPaused(accountId)) {
+            progress.isCompleted = true;
+            progress.isRunning = false;
+            progress.verificationRequired = true;
+            progress.deferredCount = items.size();
+            progress.message = "账号正在等待安全验证，商品详情同步已暂停";
+            accountSyncMap.remove(accountId);
+            return syncId;
+        }
 
         if (items.isEmpty()) {
             progress.isCompleted = true;
@@ -170,6 +189,8 @@ public class ItemDetailSyncServiceImpl implements ItemDetailSyncService {
                 }
 
                 if (result.verificationRequired()) {
+                    webSocketTokenService.pauseForVerification(accountId, result.captchaUrl(),
+                            "商品详情接口要求安全验证");
                     progress.verificationRequired = true;
                     progress.captchaUrl = result.captchaUrl();
                     progress.deferredCount = Math.max(0, progress.totalCount - progress.completedCount);
@@ -367,6 +388,9 @@ public class ItemDetailSyncServiceImpl implements ItemDetailSyncService {
             log.warn("同步单个商品参数无效: accountId={}, itemId={}", accountId, itemId);
             return buildSingleSyncResult(false, false, "商品信息不完整，无法同步详情");
         }
+        if (isVerificationPaused(accountId)) {
+            return buildSingleSyncResult(false, true, "账号正在等待安全验证，商品详情同步已暂停");
+        }
         String cookieStr = accountService.getCookieByAccountId(accountId);
         if (cookieStr == null || cookieStr.isEmpty()) {
             log.warn("账号Cookie不存在: accountId={}", accountId);
@@ -378,16 +402,11 @@ public class ItemDetailSyncServiceImpl implements ItemDetailSyncService {
             return buildSingleSyncResult(true, false, "商品详情同步成功");
         }
         if (result.verificationRequired()) {
+            webSocketTokenService.pauseForVerification(accountId, result.captchaUrl(),
+                    "商品详情接口要求安全验证");
             return buildSingleSyncResult(false, true,
-                    "闲鱼要求安全验证，商品基础信息已同步。请在闲鱼客户端确认账号状态后，在账号管理中使用“凭证更新”重新扫码，再重试商品详情同步。");
-        }
-        if (result.verificationRequired() && result.captchaUrl() != null && !result.captchaUrl().isBlank()) {
-            return buildSingleSyncResult(false, true,
-                    "闲鱼要求安全验证，请在页面中完成验证后自动重试", result.captchaUrl());
-        }
-        if (result.verificationRequired()) {
-            return buildSingleSyncResult(false, true,
-                    "闲鱼要求安全验证，暂时无法读取商品详情；请在闲鱼客户端完成验证后稍后重试");
+                    "闲鱼要求安全验证，商品基础信息已同步。请在闲鱼客户端确认账号状态后，在账号管理中使用“凭证更新”重新扫码，再重试商品详情同步。",
+                    result.captchaUrl());
         }
         return buildSingleSyncResult(false, false,
                 result.message() == null || result.message().isBlank() ? "商品详情同步失败，请稍后重试" : result.message());
@@ -395,6 +414,18 @@ public class ItemDetailSyncServiceImpl implements ItemDetailSyncService {
 
     private SyncSingleItemRespDTO buildSingleSyncResult(boolean success, boolean verificationRequired, String message) {
         return buildSingleSyncResult(success, verificationRequired, message, null);
+    }
+
+    private boolean isVerificationPaused(Long accountId) {
+        if (accountId == null) return false;
+        if (webSocketTokenService.isCaptchaPending(accountId)) return true;
+        try {
+            XianyuAccount account = accountMapper.selectById(accountId);
+            return account != null && Integer.valueOf(-2).equals(account.getStatus());
+        } catch (Exception exception) {
+            log.warn("读取账号安全验证状态失败，本次不发起商品详情请求: accountId={}", accountId);
+            return true;
+        }
     }
 
     private SyncSingleItemRespDTO buildSingleSyncResult(boolean success, boolean verificationRequired, String message, String captchaUrl) {

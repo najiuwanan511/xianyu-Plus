@@ -22,7 +22,8 @@ app:
     startup-reconnect-attempts: ${WEBSOCKET_STARTUP_RECONNECT_ATTEMPTS:8}
     startup-reconnect-interval-ms: ${WEBSOCKET_STARTUP_RECONNECT_INTERVAL_MS:30000}
     automatic-repair:
-      enabled: ${WEBSOCKET_AUTOMATIC_REPAIR_ENABLED:true}
+      # 默认禁止周期性强制刷新和断开重连；真实断线由 WebSocket 自身限次退避恢复。
+      enabled: ${WEBSOCKET_AUTOMATIC_REPAIR_ENABLED:false}
       min-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MIN_HOURS:5}
       max-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MAX_HOURS:8}
       account-spacing-minutes: ${WEBSOCKET_AUTOMATIC_REPAIR_ACCOUNT_SPACING_MINUTES:60}
@@ -46,6 +47,8 @@ app:
     remote-enabled: ${CAPTCHA_BROWSER_REMOTE_ENABLED:false}
     remote-port: ${CAPTCHA_BROWSER_REMOTE_PORT:7900}
     remote-url: ${CAPTCHA_BROWSER_REMOTE_URL:}
+    # 每个账号复用独立的浏览器存储状态和固定指纹；Docker中位于持久化/app/data卷。
+    profile-dir: ${CAPTCHA_BROWSER_PROFILE_DIR:./data/browser-profiles}
 
 # AI功能开关（默认开启，API Key从数据库xianyu_sys_setting表读取，未配置时AI功能自动降级）
 ai:
@@ -95,9 +98,12 @@ websocket:
   heartbeat-timeout: 5
   # Token重试间隔（秒，默认5分钟）
   token-retry-interval: 300
-  # 凭证刷新间隔（分钟），用于Cookie保活和_m_h5_tk兜底刷新
-  credential-refresh-min-minutes: 15
-  credential-refresh-max-minutes: 20
+  # 默认只在接口真实失败时刷新 Cookie；如需主动健康检查可显式开启，间隔限制为2～4小时。
+  credential-keep-alive-enabled: ${WEBSOCKET_CREDENTIAL_KEEP_ALIVE_ENABLED:false}
+  credential-refresh-min-minutes: ${WEBSOCKET_CREDENTIAL_REFRESH_MIN_MINUTES:120}
+  credential-refresh-max-minutes: ${WEBSOCKET_CREDENTIAL_REFRESH_MAX_MINUTES:240}
+  # 关闭旧的每分钟 Token 扫描，连接自身会按数据库真实过期时间提前刷新。
+  token-refresh-scan-enabled: ${WEBSOCKET_TOKEN_REFRESH_SCAN_ENABLED:false}
   # 消息过期时间（毫秒，默认5分钟）
   message-expire-time: 300000
   # 人工接管超时（秒，默认1小时）
@@ -107,9 +113,11 @@ websocket:
   # 模拟人工输入延迟
   simulate-human-typing: false
   # 连接重连延迟（秒）
-  reconnect-delay: 5
+  reconnect-delay: ${WEBSOCKET_RECONNECT_DELAY_SECONDS:15}
+  # 异常断线采用15、30、60、120、240秒退避，达到上限后等待人工处理或下次启动恢复。
+  max-reconnect-delay: ${WEBSOCKET_MAX_RECONNECT_DELAY_SECONDS:300}
   # 最大重连次数
-  max-reconnect-attempts: 10
+  max-reconnect-attempts: ${WEBSOCKET_MAX_RECONNECT_ATTEMPTS:5}
   # 消息发送重试次数
   message-retry-attempts: 3
   # 消息发送重试延迟（毫秒）

@@ -12,9 +12,11 @@ import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.mapper.XianyuChatUserProfileMapper;
 import com.xianyusmart.mapper.XianyuCookieMapper;
 import com.xianyusmart.service.ChatAvatarProfileService;
+import com.xianyusmart.service.WebSocketTokenService;
 import com.xianyusmart.utils.XianyuApiUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -42,6 +44,9 @@ public class ChatAvatarProfileServiceImpl implements ChatAvatarProfileService {
     private final Map<Long, Long> lastRequestAt = new ConcurrentHashMap<>();
     private final Map<String, Long> failedUntil = new ConcurrentHashMap<>();
 
+    @Autowired(required = false)
+    private WebSocketTokenService webSocketTokenService;
+
     public ChatAvatarProfileServiceImpl(XianyuAccountMapper accountMapper,
                                         XianyuCookieMapper cookieMapper,
                                         XianyuChatUserProfileMapper profileMapper,
@@ -60,6 +65,10 @@ public class ChatAvatarProfileServiceImpl implements ChatAvatarProfileService {
         XianyuAccount account = accountMapper.selectById(request.getXianyuAccountId());
         if (account == null) return response;
         response.setAccountAvatarUrl(account.getAvatarUrl());
+        if (Integer.valueOf(-2).equals(account.getStatus())
+                || (webSocketTokenService != null && webSocketTokenService.isCaptchaPending(account.getId()))) {
+            return response;
+        }
 
         String cookie = findValidCookie(account.getId());
         List<ChatAvatarQueryReqDTO.QueryItem> queries = request.getQueries() == null
@@ -147,6 +156,10 @@ public class ChatAvatarProfileServiceImpl implements ChatAvatarProfileService {
             String ret = root.path("ret").isArray() && !root.path("ret").isEmpty()
                     ? root.path("ret").get(0).asText("") : "";
             if (!ret.contains("SUCCESS")) {
+                if ((ret.contains("FAIL_SYS_USER_VALIDATE") || ret.contains("RGV587_ERROR"))
+                        && webSocketTokenService != null) {
+                    webSocketTokenService.pauseForVerification(accountId, null, "聊天头像接口要求安全验证");
+                }
                 log.debug("头像资料接口未成功: accountId={}, owner={}, ret={}", accountId, owner, ret);
                 return null;
             }
