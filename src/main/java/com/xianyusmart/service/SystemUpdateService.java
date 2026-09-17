@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -62,6 +63,8 @@ public class SystemUpdateService {
 
     @Value("${UPDATE_CHECK_CACHE_MINUTES:60}")
     private long cacheMinutes;
+    @Value("${UPDATE_GITHUB_TOKEN:}")
+    private String githubToken;
     @Value("${UPDATE_REQUEST_DIR:/app/update}")
     private String updateRequestDir;
 
@@ -86,7 +89,11 @@ public class SystemUpdateService {
     }
 
     /** 提交一个由 fnOS/Linux 宿主机代理执行的在线更新任务。 */
-    public synchronized OnlineUpdateStatusRespDTO requestOnlineUpdate() {
+    public OnlineUpdateStatusRespDTO requestOnlineUpdate() {
+        return requestOnlineUpdate(null);
+    }
+
+    public synchronized OnlineUpdateStatusRespDTO requestOnlineUpdate(String browserDetectedVersion) {
         OnlineUpdateStatusRespDTO current = onlineUpdateStatus();
         if (!current.isAvailable()) {
             throw new IllegalStateException("在线更新代理尚未安装或未就绪，请先在飞牛OS执行安装命令");
@@ -98,7 +105,15 @@ public class SystemUpdateService {
         SystemUpdateStatusRespDTO releaseStatus = checkStatus(true);
         String targetVersion = normalizeVersion(releaseStatus.getLatestVersion());
         if (!releaseStatus.isUpdateAvailable() || !isSemanticVersion(targetVersion)) {
-            throw new IllegalStateException("当前已经是最新正式版本");
+            String browserVersion = normalizeVersion(browserDetectedVersion);
+            String currentVersion = normalizeVersion(releaseStatus.getCurrentVersion());
+            if (isSemanticVersion(browserVersion) && isSemanticVersion(currentVersion)
+                    && compareVersions(browserVersion, currentVersion) > 0) {
+                targetVersion = browserVersion;
+                log.info("后端无法读取 GitHub Release，使用管理员浏览器检测到的版本 V{}", targetVersion);
+            } else {
+                throw new IllegalStateException("当前已经是最新正式版本");
+            }
         }
 
         int blockingTasks = countOnlineUpdateBlockingTasks();
@@ -285,12 +300,18 @@ public class SystemUpdateService {
             return status;
         }
 
+        // Release 是用户实际能安装的版本，必须优先、独立检查。
+        // Compare API 可能因旧镜像提交不存在、限流或网络超时失败，
+        // 不应因此丢失已发布的正式版本。
+        boolean releaseResolved = fetchLatestVersion(normalizedRepository, status);
+        applyReleaseVersionStatus(status);
+
         String normalizedCommit = currentCommit == null ? "" : currentCommit.trim();
         if (!COMMIT_PATTERN.matcher(normalizedCommit).matches()) {
-            status.setMessage("正在按 GitHub 正式版本检查更新");
-            status.setUpdateUrl("https://github.com/" + normalizedRepository + "/releases/latest");
-            fetchLatestVersion(normalizedRepository, status);
-            applyReleaseVersionStatus(status);
+            if (!releaseResolved) {
+                status.setMessage("暂时无法读取 GitHub 正式版本，请稍后重试或手动查看 Release");
+                status.setUpdateUrl("https://github.com/" + normalizedRepository + "/releases/latest");
+            }
             fetchReleaseHighlights(normalizedRepository, status);
             applyBundledReleaseNotes(status);
             return status;
@@ -299,7 +320,7 @@ public class SystemUpdateService {
         try {
             String compareUrl = "https://api.github.com/repos/" + normalizedRepository
                     + "/compare/" + normalizedCommit + "...main";
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = githubApiRequestBuilder()
                     .uri(URI.create(compareUrl))
                     .timeout(Duration.ofSeconds(10))
                     .header("Accept", "application/vnd.github+json")
@@ -309,8 +330,12 @@ public class SystemUpdateService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 log.warn("GitHub 更新检查失败: status={}", response.statusCode());
-                status.setMessage("暂时无法检查 GitHub 更新，将稍后自动重试");
-                status.setUpdateUrl("https://github.com/" + normalizedRepository + "/commits/main");
+                if (!releaseResolved) {
+                    status.setMessage("暂时无法检查 GitHub 更新，请稍后重试或手动查看 Release");
+                    status.setUpdateUrl("https://github.com/" + normalizedRepository + "/releases/latest");
+                }
+                fetchReleaseHighlights(normalizedRepository, status);
+                applyBundledReleaseNotes(status);
                 return status;
             }
 
@@ -329,7 +354,6 @@ public class SystemUpdateService {
                     : updateUrl);
 
             applyCompareStatus(status, compareStatus, root);
-            fetchLatestVersion(normalizedRepository, status);
             applyReleaseVersionStatus(status);
             if ((status.getLatestVersion() == null || status.getLatestVersion().isBlank())
                     && "identical".equals(compareStatus)) {
@@ -339,8 +363,12 @@ public class SystemUpdateService {
             applyBundledReleaseNotes(status);
         } catch (Exception e) {
             log.warn("GitHub 更新检查异常", e);
-            status.setMessage("暂时无法检查 GitHub 更新，将稍后自动重试");
-            status.setUpdateUrl("https://github.com/" + normalizedRepository + "/commits/main");
+            if (!releaseResolved) {
+                status.setMessage("暂时无法检查 GitHub 更新，请稍后重试或手动查看 Release");
+                status.setUpdateUrl("https://github.com/" + normalizedRepository + "/releases/latest");
+            }
+            fetchReleaseHighlights(normalizedRepository, status);
+            applyBundledReleaseNotes(status);
         }
         return status;
     }
@@ -375,10 +403,10 @@ public class SystemUpdateService {
                 ? "发现正式版本 V" + latest + "，可以在线更新"
                 : "当前已是最新正式版本 V" + current);
     }
-    private void fetchLatestVersion(String normalizedRepository, SystemUpdateStatusRespDTO status) {
+    private boolean fetchLatestVersion(String normalizedRepository, SystemUpdateStatusRespDTO status) {
         try {
             String releasesUrl = "https://api.github.com/repos/" + normalizedRepository + "/releases/latest";
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = githubApiRequestBuilder()
                     .uri(URI.create(releasesUrl))
                     .timeout(Duration.ofSeconds(8))
                     .header("Accept", "application/vnd.github+json")
@@ -388,20 +416,84 @@ public class SystemUpdateService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200) {
                 JsonNode release = objectMapper.readTree(response.body());
-                if (!release.path("draft").asBoolean(false) && !release.path("prerelease").asBoolean(false)) {
-                    String latest = normalizeVersion(release.path("tag_name").asText(""));
-                    if (isSemanticVersion(latest)) {
-                        status.setLatestVersion(latest);
-                        String latestUrl = release.path("html_url").asText("");
-                        if (!latestUrl.isBlank()) {
-                            status.setUpdateUrl(latestUrl);
-                        }
-                    }
+                if (applyLatestRelease(release, status)) {
+                    return true;
                 }
+            } else {
+                log.warn("读取 GitHub 最新正式版本失败: status={}", response.statusCode());
             }
         } catch (Exception e) {
-            log.debug("读取 GitHub 最新正式版本失败", e);
+            log.warn("读取 GitHub 最新正式版本异常，尝试网页重定向兜底: {}", e.getMessage());
         }
+        return fetchLatestVersionFromRedirect(normalizedRepository, status);
+    }
+
+    boolean applyLatestRelease(JsonNode release, SystemUpdateStatusRespDTO status) {
+        if (release == null || release.path("draft").asBoolean(false)
+                || release.path("prerelease").asBoolean(false)) {
+            return false;
+        }
+        String latest = normalizeVersion(release.path("tag_name").asText(""));
+        if (!isSemanticVersion(latest)) {
+            return false;
+        }
+        status.setLatestVersion(latest);
+        String latestUrl = release.path("html_url").asText("");
+        if (!latestUrl.isBlank()) {
+            status.setUpdateUrl(latestUrl);
+        }
+        List<String> highlights = new ArrayList<>();
+        appendReleaseBodyHighlights(release.path("body").asText(""), highlights);
+        if (!highlights.isEmpty()) {
+            status.setUpdateHighlights(highlights);
+        }
+        return true;
+    }
+
+    private boolean fetchLatestVersionFromRedirect(String normalizedRepository,
+                                                   SystemUpdateStatusRespDTO status) {
+        try {
+            URI latestUri = URI.create("https://github.com/" + normalizedRepository + "/releases/latest");
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(latestUri)
+                    .timeout(Duration.ofSeconds(12))
+                    .header("Accept", "text/html")
+                    .header("User-Agent", "XianYuPlus-Update-Checker")
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+            String latest = extractReleaseVersionFromRedirect(response.uri());
+            if (response.statusCode() >= 200 && response.statusCode() < 400 && isSemanticVersion(latest)) {
+                status.setLatestVersion(latest);
+                status.setUpdateUrl(response.uri().toString());
+                log.info("已通过 GitHub Release 网页重定向识别最新版本 V{}", latest);
+                return true;
+            }
+            log.warn("GitHub Release 网页重定向未返回可识别版本: status={}, uri={}",
+                    response.statusCode(), response.uri());
+        } catch (Exception exception) {
+            log.warn("GitHub Release 网页重定向兜底失败: {}", exception.getMessage());
+        }
+        return false;
+    }
+
+    String extractReleaseVersionFromRedirect(URI uri) {
+        if (uri == null || uri.getPath() == null) return "";
+        String marker = "/releases/tag/";
+        int markerIndex = uri.getPath().indexOf(marker);
+        if (markerIndex < 0) return "";
+        String tag = uri.getPath().substring(markerIndex + marker.length());
+        int slashIndex = tag.indexOf('/');
+        if (slashIndex >= 0) tag = tag.substring(0, slashIndex);
+        return normalizeVersion(URLDecoder.decode(tag, StandardCharsets.UTF_8));
+    }
+
+    private HttpRequest.Builder githubApiRequestBuilder() {
+        HttpRequest.Builder builder = HttpRequest.newBuilder();
+        if (githubToken != null && !githubToken.isBlank()) {
+            builder.header("Authorization", "Bearer " + githubToken.trim());
+        }
+        return builder;
     }
 
     /**
@@ -410,15 +502,17 @@ public class SystemUpdateService {
      * maintained as Chinese release notes.
      */
     private void fetchReleaseHighlights(String normalizedRepository, SystemUpdateStatusRespDTO status) {
-        String currentVersion = normalizeVersion(status.getCurrentVersion());
         String latestVersion = normalizeVersion(status.getLatestVersion());
         if (!isSemanticVersion(latestVersion)) {
+            return;
+        }
+        if (status.getUpdateHighlights() != null && !status.getUpdateHighlights().isEmpty()) {
             return;
         }
 
         try {
             String releasesUrl = "https://api.github.com/repos/" + normalizedRepository + "/releases?per_page=100";
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = githubApiRequestBuilder()
                     .uri(URI.create(releasesUrl))
                     .timeout(Duration.ofSeconds(8))
                     .header("Accept", "application/vnd.github+json")

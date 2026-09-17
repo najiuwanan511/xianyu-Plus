@@ -180,6 +180,9 @@ sudo ./deploy/self-update/install-online-update.sh
 WebSocket Token 仅按平台返回的真实过期时间提前刷新，异常断线最多退避重连 5 次。离线订单仅每 10 分钟补偿一次，
 在线账号仍由实时事件驱动。部署后还应尽量保持固定公网出口 IP，避免服务器、电脑和手机在短时间内跨地区切换同一账号。
 
+版本检查优先读取 GitHub 正式 Release，API 限流或提交比较失败时会通过 Release 网页重定向继续识别版本；如果容器本身无法访问 GitHub，管理页面还会由当前浏览器直接读取公开 Release 作为兜底。
+如果多个容器共用同一公网 IP 导致 GitHub API 限流，可在 `.env` 中配置只读的 `UPDATE_GITHUB_TOKEN`。
+
 飞牛 OS 只使用 Docker 时，可开启容器内远程浏览器验证：
 
 ```env

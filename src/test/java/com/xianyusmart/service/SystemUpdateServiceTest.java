@@ -9,6 +9,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.URI;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -64,6 +66,35 @@ class SystemUpdateServiceTest {
 
         assertTrue(status.isUpdateAvailable());
         assertEquals("发现正式版本 V2.2.5，可以在线更新", status.getMessage());
+    }
+
+    @Test
+    void latestReleaseResponseProvidesVersionUrlAndHighlights() throws Exception {
+        SystemUpdateStatusRespDTO status = new SystemUpdateStatusRespDTO();
+        JsonNode release = objectMapper.readTree("""
+                {
+                  "tag_name":"v2.3.18",
+                  "html_url":"https://github.com/najiuwanan511/xianyu-Plus/releases/tag/v2.3.18",
+                  "draft":false,
+                  "prerelease":false,
+                  "body":"## 更新内容\\n\\n- 修复版本检查\\n- 增加网页重定向兜底"
+                }
+                """);
+
+        assertTrue(service.applyLatestRelease(release, status));
+        assertEquals("2.3.18", status.getLatestVersion());
+        assertEquals("https://github.com/najiuwanan511/xianyu-Plus/releases/tag/v2.3.18", status.getUpdateUrl());
+        assertEquals(List.of("修复版本检查", "增加网页重定向兜底"), status.getUpdateHighlights());
+    }
+
+    @Test
+    void extractsSemanticVersionFromLatestReleaseRedirect() {
+        String version = service.extractReleaseVersionFromRedirect(
+                URI.create("https://github.com/najiuwanan511/xianyu-Plus/releases/tag/v2.3.18"));
+
+        assertEquals("2.3.18", version);
+        assertEquals("", service.extractReleaseVersionFromRedirect(
+                URI.create("https://github.com/najiuwanan511/xianyu-Plus/releases/latest")));
     }
 
     @Test

@@ -122,9 +122,10 @@ public class SystemController {
     }
 
     @PostMapping("/online-update")
-    public ResultObject<OnlineUpdateStatusRespDTO> requestOnlineUpdate() {
+    public ResultObject<OnlineUpdateStatusRespDTO> requestOnlineUpdate(
+            @RequestParam(value = "version", required = false) String version) {
         try {
-            return ResultObject.success(systemUpdateService.requestOnlineUpdate());
+            return ResultObject.success(systemUpdateService.requestOnlineUpdate(version));
         } catch (IllegalStateException exception) {
             return ResultObject.failed(exception.getMessage());
         } catch (Exception exception) {

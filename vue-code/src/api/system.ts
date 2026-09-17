@@ -28,6 +28,14 @@ export interface OnlineUpdateStatus {
   updatedAt?: string
 }
 
+export interface GithubReleaseFallback {
+  tag_name: string
+  html_url: string
+  draft: boolean
+  prerelease: boolean
+  body?: string
+}
+
 /** 获取当前用户信息 */
 export function getCurrentUser() {
   return request<{ username: string; lastLoginTime: string }>({
@@ -52,6 +60,24 @@ export function getSystemUpdateStatus(refresh = false) {
     method: 'get'
   })
 }
+
+/** 当容器无法访问 GitHub API 时，由管理员浏览器独立检查公开 Release。 */
+export async function getGithubLatestReleaseFallback(): Promise<GithubReleaseFallback> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 8000)
+  try {
+    const response = await fetch('https://api.github.com/repos/najiuwanan511/xianyu-Plus/releases/latest', {
+      headers: {
+        Accept: 'application/vnd.github+json'
+      },
+      signal: controller.signal
+    })
+    if (!response.ok) throw new Error(`GitHub API ${response.status}`)
+    return await response.json() as GithubReleaseFallback
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
 export function getOnlineUpdateStatus() {
   return request<OnlineUpdateStatus>({
     url: '/system/online-update-status',
@@ -59,9 +85,9 @@ export function getOnlineUpdateStatus() {
   })
 }
 
-export function requestOnlineUpdate() {
+export function requestOnlineUpdate(version?: string) {
   return request<OnlineUpdateStatus>({
-    url: '/system/online-update',
+    url: `/system/online-update${version ? `?version=${encodeURIComponent(version)}` : ''}`,
     method: 'post'
   })
 }

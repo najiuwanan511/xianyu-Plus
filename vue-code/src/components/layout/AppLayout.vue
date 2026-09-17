@@ -6,6 +6,7 @@ import UserMenu from './UserMenu.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import {
   getOnlineUpdateStatus,
+  getGithubLatestReleaseFallback,
   getSystemUpdateStatus,
   requestOnlineUpdate,
   type OnlineUpdateStatus,
@@ -32,6 +33,25 @@ const selectedRelease = computed(() => ({
 }))
 
 const displayVersion = (version?: string) => version ? `V${version.replace(/^[vV]/, '')}` : '未知版本'
+const normalizeVersion = (version?: string) => (version || '').replace(/^[vV]/, '')
+const compareVersions = (left?: string, right?: string) => {
+  const a = (normalizeVersion(left).split(/[-+]/, 1)[0] ?? '').split('.').map(Number)
+  const b = (normalizeVersion(right).split(/[-+]/, 1)[0] ?? '').split('.').map(Number)
+  if (a.length !== 3 || b.length !== 3 || [...a, ...b].some(value => !Number.isFinite(value))) return 0
+  for (let index = 0; index < 3; index += 1) {
+    const leftPart = a[index]!
+    const rightPart = b[index]!
+    if (leftPart !== rightPart) return leftPart - rightPart
+  }
+  return 0
+}
+const parseReleaseHighlights = (body?: string) => (body || '')
+  .split(/\r?\n/)
+  .map(line => line.trim())
+  .filter(line => /^[-*+]\s+/.test(line))
+  .map(line => line.replace(/^[-*+]\s+/, '').trim())
+  .filter(Boolean)
+  .slice(0, 8)
 const latestVersionDisplay = computed(() => updateStatus.value?.latestVersion
   ? displayVersion(updateStatus.value.latestVersion)
   : '暂未获取')
@@ -154,7 +174,7 @@ const startOnlineUpdate = async () => {
   if (!window.confirm('在线更新会短暂重启应用容器。当前任务完成后将自动恢复，是否继续？')) return
   updateSubmitting.value = true
   try {
-    const response = await requestOnlineUpdate()
+    const response = await requestOnlineUpdate(updateStatus.value?.latestVersion)
     if ((response.code !== 0 && response.code !== 200) || !response.data) {
       throw new Error(response.msg || '提交在线更新失败')
     }
@@ -174,6 +194,27 @@ const loadUpdateStatus = async (forceRefresh = false) => {
     const response = await getSystemUpdateStatus(forceRefresh)
     if (response.code === 0 || response.code === 200) {
       updateStatus.value = response.data || null
+      if (updateStatus.value?.currentVersion && !updateStatus.value.latestVersion) {
+        try {
+          const release = await getGithubLatestReleaseFallback()
+          const latestVersion = normalizeVersion(release.tag_name)
+          if (!release.draft && !release.prerelease && /^\d+\.\d+\.\d+(?:[-+].*)?$/.test(latestVersion)) {
+            const updateAvailable = compareVersions(latestVersion, updateStatus.value.currentVersion) > 0
+            updateStatus.value = {
+              ...updateStatus.value,
+              latestVersion,
+              updateAvailable,
+              updateUrl: release.html_url,
+              updateHighlights: parseReleaseHighlights(release.body),
+              message: updateAvailable
+                ? `发现正式版本 V${latestVersion}（由当前浏览器检测）`
+                : `当前已是最新正式版本 V${normalizeVersion(updateStatus.value.currentVersion)}`
+            }
+          }
+        } catch {
+          // 后端和浏览器都不可达时，保留后端返回的手动 Release 入口。
+        }
+      }
     }
   } catch {
     updateStatus.value = {
