@@ -63,8 +63,8 @@ public class ProductPublishServiceImpl implements ProductPublishService {
         if (!SUPPORTED_FORM_LEVELS.contains(schema.getSupportLevel())) {
             throw new BusinessException(409, "当前类目属于专项流程，暂不允许按普通商品发布：" + schema.getSupportLabel());
         }
-        if (schema.getDependentPropertyCount() > 0) {
-            throw new BusinessException(409, "当前类目仍有联动属性未加载，请完善品牌、型号或上级属性后重新检测");
+        if (schema.getProperties().stream().anyMatch(property -> property.isRequired() && property.isDependent())) {
+            throw new BusinessException(409, "当前类目仍有必填联动属性未加载，请完善品牌、型号或上级属性后重新检测");
         }
 
         List<Map<String, Object>> labels = resolveLabels(schema, request.getProperties());

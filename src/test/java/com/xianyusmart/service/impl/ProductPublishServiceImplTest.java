@@ -167,6 +167,70 @@ class ProductPublishServiceImplTest {
     }
 
     @Test
+    void shouldAllowOptionalDependentServicePropertyToRemainEmpty() {
+        ProductPublishReqDTO request = request();
+        request.setTitle("书亦烧仙草拼单助力服务");
+        request.setProperties(List.of(
+                selection("delivery-period", "10m"),
+                selection("service-type", "assist"),
+                selection("pricing", "unit")));
+        PublishCapabilityCheckRespDTO schema = assistServiceSchema();
+        PublishCapabilityCheckRespDTO.Property optionalRegion = new PublishCapabilityCheckRespDTO.Property();
+        optionalRegion.setPropertyId("service-region");
+        optionalRegion.setPropertyName("服务区域");
+        optionalRegion.setRequired(false);
+        optionalRegion.setDependent(true);
+        schema.setProperties(List.of(
+                serviceProperty("delivery-period", "交付周期", "10m", "10分钟"),
+                serviceProperty("service-type", "服务类型", "assist", "助力"),
+                serviceProperty("pricing", "计价方式", "unit", "元/次"),
+                optionalRegion));
+        schema.setDependentPropertyCount(1);
+        when(probeService.check(eq(7L), eq(request.getTitle()), eq(request.getDescription()),
+                any(List.class), any(List.class))).thenReturn(schema);
+        when(accountService.getCookieByAccountId(7L)).thenReturn("_m_h5_tk=token_exp");
+        when(apiCallUtils.callApiWithRetry(eq(7L), eq(PublishCapabilityProbeService.LOCATION_API), any(Map.class),
+                any(String.class), eq("1.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true,
+                        "{\"ret\":[\"SUCCESS\"],\"data\":{\"commonAddresses\":[{\"divisionId\":\"310115\",\"city\":\"上海\"}]}}",
+                        null, false));
+        when(apiCallUtils.callApiWithRetry(eq(7L), eq(ProductPublishServiceImpl.PUBLISH_API), any(Map.class),
+                any(String.class), eq("1.0"), eq(null), eq(null)))
+                .thenReturn(new XianyuApiCallUtils.ApiCallResult(true,
+                        "{\"ret\":[\"SUCCESS\"],\"data\":{\"itemId\":\"service-optional-1\"}}", null, false));
+
+        ProductPublishRespDTO response = service.publish(request);
+
+        assertTrue(response.isSuccess());
+        assertEquals("service-optional-1", response.getItemId());
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(apiCallUtils).callApiWithRetry(eq(7L), eq(ProductPublishServiceImpl.PUBLISH_API), payload.capture(),
+                any(String.class), eq("1.0"), eq(null), eq(null));
+        assertEquals(3, ((List<?>) payload.getValue().get("itemLabelExtList")).size());
+    }
+
+    @Test
+    void shouldStillRejectRequiredDependentProperty() {
+        ProductPublishReqDTO request = request();
+        PublishCapabilityCheckRespDTO schema = generalSchema();
+        PublishCapabilityCheckRespDTO.Property requiredDependent = new PublishCapabilityCheckRespDTO.Property();
+        requiredDependent.setPropertyId("model");
+        requiredDependent.setPropertyName("型号");
+        requiredDependent.setRequired(true);
+        requiredDependent.setDependent(true);
+        schema.setProperties(List.of(requiredDependent));
+        schema.setDependentPropertyCount(1);
+        when(probeService.check(eq(7L), eq(request.getTitle()), eq(request.getDescription()),
+                any(List.class), any(List.class))).thenReturn(schema);
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.publish(request));
+
+        assertTrue(exception.getMessage().contains("必填联动属性"));
+        verify(apiCallUtils, never()).callApiWithRetry(eq(7L), eq(ProductPublishServiceImpl.PUBLISH_API),
+                any(Map.class), any(String.class), any(String.class), any(), any());
+    }
+
+    @Test
     void shouldPublishWithSelectedPoiWhenCommonAddressesAreMissing() {
         ProductPublishReqDTO request = request();
         ProductPublishReqDTO.Address addressRequest = new ProductPublishReqDTO.Address();
