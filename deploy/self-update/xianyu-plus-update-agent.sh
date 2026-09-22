@@ -14,8 +14,9 @@ BACKUP_JAR="$UPDATE_DIR/app.jar.previous"
 INSTALL_MARKER="$UPDATE_DIR/installing.task"
 MAINTENANCE_FLAG="$UPDATE_DIR/maintenance.flag"
 RELEASE_API="${UPDATE_RELEASE_API:-https://api.github.com/repos/najiuwanan511/xianyu-Plus/releases/latest}"
+DOWNLOAD_PROXY_PREFIXES="${UPDATE_DOWNLOAD_PROXY_PREFIXES-https://gh-proxy.com/,https://ghfast.top/,https://ghproxy.net/}"
 WORK_DIR="$(mktemp -d "$UPDATE_DIR/work.XXXXXX")"
-DOWNLOAD_ATTEMPTS=5
+DOWNLOAD_ATTEMPTS_PER_SOURCE=2
 TASK_ID=""
 TARGET_VERSION=""
 REQUESTED_AT=""
@@ -128,36 +129,53 @@ cleanup() {
 }
 trap cleanup EXIT
 
+download_urls() {
+    local original="$1" prefix
+    printf '%s\n' "$original"
+    while IFS= read -r prefix; do
+        prefix="$(printf '%s' "$prefix" | tr -d '[:space:]')"
+        [[ "$prefix" =~ ^https://[^[:space:]]+/$ ]] || continue
+        printf '%s%s\n' "$prefix" "$original"
+    done < <(printf '%s' "$DOWNLOAD_PROXY_PREFIXES" | tr ',' '\n')
+}
+
 download_jar() {
-    local url="$1" target="$2" total="$3" attempt pid downloaded progress
-    for attempt in $(seq 1 "$DOWNLOAD_ATTEMPTS"); do
-        downloaded="$(stat -c %s "$target" 2>/dev/null || echo 0)"
-        if [[ "$downloaded" -gt "$total" ]]; then
-            rm -f "$target"
-            downloaded=0
-        elif [[ "$downloaded" -eq "$total" ]]; then
-            status "DOWNLOADING" 70 "更新文件下载完成" "$downloaded" "$total"
-            return 0
-        fi
-        status "DOWNLOADING" "$CURRENT_PROGRESS" "正在下载更新文件（第 $attempt/$DOWNLOAD_ATTEMPTS 次）" "$downloaded" "$total"
-        curl -fsSL --connect-timeout 30 --max-time 1800 --continue-at - "$url" -o "$target" &
-        pid=$!
-        while kill -0 "$pid" 2>/dev/null; do
+    local target="$1" total="$2" url source_index attempt pid downloaded progress route
+    shift 2
+    local sources=("$@")
+    for source_index in "${!sources[@]}"; do
+        url="${sources[$source_index]}"
+        if [[ "$source_index" -eq 0 ]]; then route="GitHub 直连"; else route="备用线路 $source_index"; fi
+        for attempt in $(seq 1 "$DOWNLOAD_ATTEMPTS_PER_SOURCE"); do
             downloaded="$(stat -c %s "$target" 2>/dev/null || echo 0)"
-            progress=$((10 + downloaded * 60 / total))
-            (( progress > 70 )) && progress=70
-            status "DOWNLOADING" "$progress" "正在下载更新文件（第 $attempt/$DOWNLOAD_ATTEMPTS 次）" "$downloaded" "$total"
-            sleep 2
+            if [[ "$downloaded" -gt "$total" ]]; then
+                rm -f "$target"
+                downloaded=0
+            elif [[ "$downloaded" -eq "$total" ]]; then
+                status "DOWNLOADING" 70 "更新文件下载完成" "$downloaded" "$total"
+                return 0
+            fi
+            status "DOWNLOADING" "$CURRENT_PROGRESS" "正在通过$route下载（第 $attempt/$DOWNLOAD_ATTEMPTS_PER_SOURCE 次）" "$downloaded" "$total"
+            curl -fsSL --connect-timeout 20 --max-time 1800 --retry 1 --retry-delay 2 --retry-all-errors \
+                --continue-at - "$url" -o "$target" &
+            pid=$!
+            while kill -0 "$pid" 2>/dev/null; do
+                downloaded="$(stat -c %s "$target" 2>/dev/null || echo 0)"
+                progress=$((10 + downloaded * 60 / total))
+                (( progress > 70 )) && progress=70
+                status "DOWNLOADING" "$progress" "正在通过$route下载（第 $attempt/$DOWNLOAD_ATTEMPTS_PER_SOURCE 次）" "$downloaded" "$total"
+                sleep 2
+            done
+            wait "$pid" || true
+            downloaded="$(stat -c %s "$target" 2>/dev/null || echo 0)"
+            if [[ "$downloaded" -eq "$total" ]]; then
+                status "DOWNLOADING" 70 "更新文件下载完成" "$downloaded" "$total"
+                return 0
+            fi
+            sleep $((attempt * 2))
         done
-        wait "$pid" || true
-        downloaded="$(stat -c %s "$target" 2>/dev/null || echo 0)"
-        if [[ "$downloaded" -eq "$total" ]]; then
-            status "DOWNLOADING" 70 "更新文件下载完成" "$downloaded" "$total"
-            return 0
-        fi
-        sleep $((attempt * 3))
     done
-    FAILURE_MESSAGE="更新文件下载失败，已重试 $DOWNLOAD_ATTEMPTS 次"
+    FAILURE_MESSAGE="GitHub 与备用线路均无法下载更新文件"
     return 1
 }
 
@@ -195,28 +213,33 @@ curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors --connect-timeout 15 --m
     -H 'Accept: application/vnd.github+json' -H 'User-Agent: XianYuPlus-Updater' "$RELEASE_API" -o "$WORK_DIR/release.json"
 
 python3 - "$WORK_DIR/release.json" "$WORK_DIR/asset-meta" "$TARGET_VERSION" <<'PY'
-import json, sys
+import json, re, sys
+from urllib.parse import urlparse
 release = json.load(open(sys.argv[1], encoding="utf-8"))
 version = release.get("tag_name", "").lstrip("vV")
 if version != sys.argv[3].lstrip("vV"): raise SystemExit("GitHub最新正式版本与请求版本不一致")
 assets = release.get("assets") or []
 jars = [a for a in assets if a.get("name", "").startswith("xianyu-plus-") and a.get("name", "").endswith(".jar")]
-checksums = [a for a in assets if a.get("name") == "SHA256SUMS.txt"]
-if len(jars) != 1 or len(checksums) != 1: raise SystemExit("正式版本缺少唯一JAR或SHA256SUMS.txt")
+if len(jars) != 1: raise SystemExit("正式版本缺少唯一JAR")
 size = jars[0].get("size")
 if not isinstance(size, int) or size <= 0: raise SystemExit("正式版本JAR大小无效")
+url = jars[0].get("browser_download_url", "")
+parsed = urlparse(url)
+if parsed.scheme != "https" or parsed.netloc != "github.com" or not parsed.path.startswith("/najiuwanan511/xianyu-Plus/releases/download/"):
+    raise SystemExit("正式版本JAR地址无效")
+digest = jars[0].get("digest", "")
+if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest): raise SystemExit("正式版本缺少可信SHA256摘要")
 with open(sys.argv[2], "w", encoding="utf-8") as output:
-    output.write(jars[0]["browser_download_url"] + "\n" + jars[0]["name"] + "\n" + str(size) + "\n" + checksums[0]["browser_download_url"] + "\n")
+    output.write(url + "\n" + jars[0]["name"] + "\n" + str(size) + "\n" + digest.split(":", 1)[1].lower() + "\n")
 PY
 
 mapfile -t ASSET < "$WORK_DIR/asset-meta"
 TOTAL_BYTES="${ASSET[2]}"
 FAILURE_MESSAGE="更新文件下载失败，当前版本继续运行"
-download_jar "${ASSET[0]}" "$WORK_DIR/app.jar" "$TOTAL_BYTES"
-FAILURE_MESSAGE="校验文件下载失败"
-curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors --connect-timeout 15 --max-time 60 "${ASSET[3]}" -o "$WORK_DIR/SHA256SUMS.txt"
+mapfile -t DOWNLOAD_URLS < <(download_urls "${ASSET[0]}")
+download_jar "$WORK_DIR/app.jar" "$TOTAL_BYTES" "${DOWNLOAD_URLS[@]}"
 status "VERIFYING" 75 "正在校验更新文件完整性" "$TOTAL_BYTES" "$TOTAL_BYTES"
-EXPECTED_SHA="$(awk -v name="${ASSET[1]}" '$2 == name || $2 == "*" name {print $1}' "$WORK_DIR/SHA256SUMS.txt")"
+EXPECTED_SHA="${ASSET[3]}"
 ACTUAL_SHA="$(sha256sum "$WORK_DIR/app.jar" | awk '{print $1}')"
 FAILURE_MESSAGE="更新文件完整性校验失败"
 [[ "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{64}$ && "${EXPECTED_SHA,,}" == "$ACTUAL_SHA" ]]

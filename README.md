@@ -127,7 +127,7 @@ sudo ./deploy/self-update/install-online-update.sh
 
 安装完成后，可在页面顶部“版本详情”中点击“立即在线更新”。更新代理运行在飞牛 OS 宿主机的 `systemd` 中，不会增加 Docker 容器；Docker 仍然是应用和 MySQL 两个主要容器。
 
-在线更新会自动下载 Release JAR、校验 SHA256、备份数据库与旧版本，并在当前自动化任务安全结束后重启应用。健康检查失败时自动恢复旧 JAR。`./update.sh` 继续保留为手动更新后备方式。
+在线更新会自动下载 Release JAR、校验 SHA256、备份数据库与旧版本，并在当前自动化任务安全结束后重启应用。GitHub Release 直链不可用时会自动切换备用下载线路，最终仍使用 GitHub API 提供的 SHA256 摘要校验文件，校验不一致不会安装。可在 `.env` 中通过 `UPDATE_DOWNLOAD_PROXY_PREFIXES` 调整或留空禁用备用线路。健康检查失败时自动恢复旧 JAR。`./update.sh` 继续保留为手动更新后备方式。
 
 ## 首次配置顺序
 

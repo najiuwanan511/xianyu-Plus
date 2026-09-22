@@ -20,7 +20,11 @@ class OnlineUpdateSourceTest {
         assertTrue(compose.contains(":/app/update"));
         assertFalse(compose.matches("(?s).*\\n\\s{2}(updater|update-agent):\\s*\\n.*"));
         assertTrue(service.contains("Type=oneshot"));
-        assertTrue(agent.contains("SHA256SUMS.txt"));
+        assertTrue(agent.contains("jars[0].get(\"digest\""));
+        assertTrue(agent.contains("https://gh-proxy.com/"));
+        assertTrue(agent.contains("https://ghfast.top/"));
+        assertTrue(agent.contains("https://ghproxy.net/"));
+        assertTrue(agent.contains("--continue-at -"));
         assertTrue(agent.contains("mysqldump --single-transaction"));
         assertTrue(agent.contains("restore_previous_jar"));
         assertTrue(agent.contains("wait_for_app"));
@@ -57,5 +61,6 @@ class OnlineUpdateSourceTest {
         assertTrue(installer.contains("[ ! -d /run/systemd/system ]"));
         assertTrue(agentInstaller.contains("--skip-app-recreate"));
         assertTrue(agentInstaller.contains("SKIP_APP_RECREATE"));
+        assertTrue(agentInstaller.contains("UPDATE_DOWNLOAD_PROXY_PREFIXES"));
     }
 }
