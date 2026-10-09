@@ -39,6 +39,8 @@ build/
 *.db-journal
 /logs/
 /.env
+/.env.websocket-*
+/deploy/**/__pycache__/
 /deploy/nginx/certs/
 /nul
 /vue-code/nul

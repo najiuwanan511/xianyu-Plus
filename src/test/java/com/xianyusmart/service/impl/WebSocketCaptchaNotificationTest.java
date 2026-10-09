@@ -23,7 +23,7 @@ import static org.mockito.Mockito.when;
 class WebSocketCaptchaNotificationTest {
 
     @Test
-    void captchaPausesSocketAndNotifiesOnlyOncePerEpisode() {
+    void captchaNotifiesOnNewUrlButNotOnRepeatedOrEmptyUrl() {
         WebSocketTokenServiceImpl service = new WebSocketTokenServiceImpl();
         WebSocketService webSocketService = mock(WebSocketService.class);
         NotificationChannelService notificationChannelService = mock(NotificationChannelService.class);
@@ -43,16 +43,22 @@ class WebSocketCaptchaNotificationTest {
                 "https://h5api.m.goofish.com/punish?first=1", "platform verification required");
         ReflectionTestUtils.invokeMethod(service, "rememberCaptchaRequirement", 7L,
                 "https://h5api.m.goofish.com/punish?second=1", "platform verification required");
+        ReflectionTestUtils.invokeMethod(service, "rememberCaptchaRequirement", 7L,
+                "https://h5api.m.goofish.com/punish?second=1", "platform verification required");
+        ReflectionTestUtils.invokeMethod(service, "rememberCaptchaRequirement", 7L,
+                "", "platform verification required");
 
         assertTrue(service.isCaptchaPending(7L));
         assertEquals("https://h5api.m.goofish.com/punish?second=1", service.getCaptchaUrl(7L));
-        verify(webSocketService, times(2)).stopWebSocket(7L);
-        verify(notificationChannelService, times(1))
+        verify(webSocketService, times(4)).stopWebSocket(7L);
+        verify(notificationChannelService, times(2))
                 .dispatchMessage(eq("CREDENTIAL_UPDATE_REQUIRED"), eq(7L), any(Map.class));
+        service.clearCaptchaWait(7L);
+        assertTrue(((Map<?, ?>) ReflectionTestUtils.getField(service, "captchaNotifiedUrls")).isEmpty());
     }
 
     @Test
-    void persistedCaptchaStatePreventsDuplicateNotificationAfterRestart() {
+    void newChallengeAfterRestartNotifiesEvenWhenAccountAlreadyNeedsVerification() {
         WebSocketTokenServiceImpl service = new WebSocketTokenServiceImpl();
         WebSocketService webSocketService = mock(WebSocketService.class);
         NotificationChannelService notificationChannelService = mock(NotificationChannelService.class);
@@ -71,7 +77,22 @@ class WebSocketCaptchaNotificationTest {
                 "https://h5api.m.goofish.com/punish", "platform verification required");
 
         assertTrue(service.isCaptchaPending(7L));
-        verify(notificationChannelService, never())
+        verify(notificationChannelService, times(1))
                 .dispatchMessage(eq("CREDENTIAL_UPDATE_REQUIRED"), eq(7L), any(Map.class));
+        service.clearAccountRuntimeState(7L);
+        assertTrue(((Map<?, ?>) ReflectionTestUtils.getField(service, "captchaNotifiedUrls")).isEmpty());
+    }
+
+    @Test
+    void remoteNotificationUsesConfiguredVncLocation() {
+        WebSocketTokenServiceImpl service = new WebSocketTokenServiceImpl();
+        NotificationChannelService notifications = mock(NotificationChannelService.class);
+        ReflectionTestUtils.setField(service, "notificationChannelService", notifications);
+        ReflectionTestUtils.setField(service, "captchaRemoteEnabled", true);
+        ReflectionTestUtils.setField(service, "captchaRemotePort", 17900);
+        ReflectionTestUtils.invokeMethod(service, "notifyCaptchaRequired", 7L, "验证链接已刷新");
+        verify(notifications).dispatchMessage(eq("CREDENTIAL_UPDATE_REQUIRED"), eq(7L),
+                org.mockito.ArgumentMatchers.argThat(params -> params.get("action").toString().contains("17900")
+                        && params.get("action").toString().contains("发起远程验证")));
     }
 }

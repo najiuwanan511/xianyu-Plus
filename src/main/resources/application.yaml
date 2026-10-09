@@ -17,16 +17,17 @@ app:
     lookback-days: ${RED_FLOWER_LOOKBACK_DAYS:30}
     batch-size: ${RED_FLOWER_BATCH_SIZE:50}
   websocket:
+    scheduler-pool-size: ${WEBSOCKET_SCHEDULER_POOL_SIZE:16}
     auto-reconnect-on-startup: ${WEBSOCKET_AUTO_RECONNECT_ON_STARTUP:true}
     startup-reconnect-delay-ms: ${WEBSOCKET_STARTUP_RECONNECT_DELAY_MS:10000}
     startup-reconnect-attempts: ${WEBSOCKET_STARTUP_RECONNECT_ATTEMPTS:8}
     startup-reconnect-interval-ms: ${WEBSOCKET_STARTUP_RECONNECT_INTERVAL_MS:30000}
     automatic-repair:
-      # 默认禁止周期性强制刷新和断开重连；真实断线由 WebSocket 自身限次退避恢复。
-      enabled: ${WEBSOCKET_AUTOMATIC_REPAIR_ENABLED:false}
-      min-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MIN_HOURS:5}
-      max-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MAX_HOURS:8}
-      account-spacing-minutes: ${WEBSOCKET_AUTOMATIC_REPAIR_ACCOUNT_SPACING_MINUTES:60}
+      # 只巡检离线账号，复用现有凭证；在线、待验证及续期中的账号不做修复。
+      enabled: ${WEBSOCKET_AUTOMATIC_REPAIR_ENABLED:true}
+      min-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MIN_HOURS:2}
+      max-hours: ${WEBSOCKET_AUTOMATIC_REPAIR_MAX_HOURS:4}
+      account-spacing-minutes: ${WEBSOCKET_AUTOMATIC_REPAIR_ACCOUNT_SPACING_MINUTES:15}
   item-polish:
     scan-delay-ms: ${ITEM_POLISH_SCAN_DELAY_MS:30000}
     initial-delay-ms: ${ITEM_POLISH_INITIAL_DELAY_MS:90000}
@@ -95,7 +96,7 @@ websocket:
   # 心跳间隔（秒）
   heartbeat-interval: 15
   # 心跳超时（秒）
-  heartbeat-timeout: 5
+  heartbeat-timeout: 10
   # Token重试间隔（秒，默认5分钟）
   token-retry-interval: 300
   # 默认只在接口真实失败时刷新 Cookie；如需主动健康检查可显式开启，间隔限制为2～4小时。
@@ -114,7 +115,7 @@ websocket:
   simulate-human-typing: false
   # 连接重连延迟（秒）
   reconnect-delay: ${WEBSOCKET_RECONNECT_DELAY_SECONDS:15}
-  # 异常断线采用15、30、60、120、240秒退避，达到上限后等待人工处理或下次启动恢复。
+  # 前5次指数退避，随后持续按最大间隔重试；等待安全验证时暂停。
   max-reconnect-delay: ${WEBSOCKET_MAX_RECONNECT_DELAY_SECONDS:300}
   # 最大重连次数
   max-reconnect-attempts: ${WEBSOCKET_MAX_RECONNECT_ATTEMPTS:5}

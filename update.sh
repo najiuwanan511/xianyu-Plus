@@ -60,6 +60,9 @@ ensure_setting APP_NETWORK_NAME xianyu-plus
 ensure_setting APP_IMAGE xianyu-plus:latest
 ensure_setting UPDATE_HOST_DIR ./runtime/update
 
+# 模板不会覆盖已有部署；同步本次掉线修复的实际环境配置并保存私有备份。
+python3 "$ROOT_DIR/deploy/migrate-websocket-env.py" "$ROOT_DIR/.env"
+
 # 仅迁移项目过去的默认镜像名；用户自行配置的远程镜像保持不变。
 if grep -q '^APP_IMAGE=xianyusmart:latest$' .env; then
     sed -i 's/^APP_IMAGE=xianyusmart:latest$/APP_IMAGE=xianyu-plus:latest/' .env

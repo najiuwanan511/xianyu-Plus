@@ -29,6 +29,9 @@ public class AsyncConfig {
 
     @Value("${app.scheduler.pool-size:4}")
     private int schedulerPoolSize;
+
+    @Value("${app.websocket.scheduler-pool-size:16}")
+    private int websocketSchedulerPoolSize = 16;
     
     /**
      * 自定义异步任务线程池
@@ -76,7 +79,7 @@ public class AsyncConfig {
 
     @Bean(name = "webSocketScheduler", destroyMethod = "shutdown")
     public ScheduledExecutorService webSocketScheduler() {
-        return scheduledExecutor(4, "xys-websocket-");
+        return scheduledExecutor(Math.max(1, websocketSchedulerPoolSize), "xys-websocket-");
     }
 
     @Bean(name = "autoReplyScheduler", destroyMethod = "shutdown")

@@ -177,8 +177,19 @@ sudo ./deploy/self-update/install-online-update.sh
 `CAPTCHA_BROWSER_MAX_CONCURRENT` 控制同时处理的验证数量，默认一次一个账号。
 
 默认保活策略为按需刷新：不再每 15～20 分钟调用 `hasLogin`，不再每 5～8 小时强制刷新并断开在线连接；
-WebSocket Token 仅按平台返回的真实过期时间提前刷新，异常断线最多退避重连 5 次。离线订单仅每 10 分钟补偿一次，
+WebSocket Token 仅按平台返回的真实过期时间提前刷新，异常断线先退避重连 5 次，随后每 5 分钟持续重试；待验证或续期中暂停。离线订单仅每 10 分钟补偿一次，
 在线账号仍由实时事件驱动。部署后还应尽量保持固定公网出口 IP，避免服务器、电脑和手机在短时间内跨地区切换同一账号。
+
+V2.3.21 默认启用离线账号的 2～4 小时错峰恢复，账号间隔 15 分钟；在线账号不会被此巡检强制断开。心跳调度线程池默认 16，可用 `WEBSOCKET_SCHEDULER_POOL_SIZE` 调整。
+
+已有部署的 `.env` 不会随模板更新。`./update.sh` 会自动迁移以下设置并保存权限受限的备份：自动恢复开启、恢复间隔 2～4 小时、账号间隔 15 分钟、补齐心跳线程池默认值（保留已有自定义线程数）。若通过网页只更新 JAR，拉取新版代码后还需执行：
+
+```bash
+python3 deploy/migrate-websocket-env.py .env
+docker compose up -d --no-build --no-deps --force-recreate app
+```
+
+重建应用容器后环境变量才生效。迁移脚本不会启用 VNC 或修改密码；如需远程验证，按下文配置并将 `CAPTCHA_BROWSER_TIMEOUT_SECONDS` 设为 `600`，给人工操作留出时间。
 
 版本检查优先读取 GitHub 正式 Release，API 限流或提交比较失败时会通过 Release 网页重定向继续识别版本；如果容器本身无法访问 GitHub，管理页面还会由当前浏览器直接读取公开 Release 作为兜底。
 如果多个容器共用同一公网 IP 导致 GitHub API 限流，可在 `.env` 中配置只读的 `UPDATE_GITHUB_TOKEN`。

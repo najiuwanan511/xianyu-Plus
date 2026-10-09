@@ -37,22 +37,22 @@ class AutomaticConnectionRepairSchedulerTest {
                 new CredentialUpdateCoordinator(),
                 Runnable::run);
         ReflectionTestUtils.setField(scheduler, "enabled", true);
-        ReflectionTestUtils.setField(scheduler, "minHours", 5);
-        ReflectionTestUtils.setField(scheduler, "maxHours", 8);
-        ReflectionTestUtils.setField(scheduler, "accountSpacingMinutes", 60);
+        ReflectionTestUtils.setField(scheduler, "minHours", 2);
+        ReflectionTestUtils.setField(scheduler, "maxHours", 4);
+        ReflectionTestUtils.setField(scheduler, "accountSpacingMinutes", 15);
     }
 
     @Test
-    void generatesRepairDelayBetweenFiveAndEightHours() {
+    void generatesRepairDelayBetweenTwoAndFourHours() {
         for (int index = 0; index < 100; index++) {
             long delay = scheduler.randomRepairDelayMillis();
-            assertTrue(delay >= TimeUnit.HOURS.toMillis(5));
-            assertTrue(delay <= TimeUnit.HOURS.toMillis(8));
+            assertTrue(delay >= TimeUnit.HOURS.toMillis(2));
+            assertTrue(delay <= TimeUnit.HOURS.toMillis(4));
         }
     }
 
     @Test
-    void repairsDueAccountsAtLeastOneHourApart() {
+    void repairsDueAccountsAtLeastFifteenMinutesApart() {
         XianyuAccount first = account(1L);
         XianyuAccount second = account(2L);
         when(accountMapper.selectList(any())).thenReturn(List.of(first, second));
@@ -69,10 +69,10 @@ class AutomaticConnectionRepairSchedulerTest {
         verify(webSocketService).startWebSocket(1L);
         verify(webSocketService, never()).stopWebSocket(1L);
 
-        scheduler.runDueRepairsAt(now + TimeUnit.MINUTES.toMillis(59));
+        scheduler.runDueRepairsAt(now + TimeUnit.MINUTES.toMillis(14));
         verify(webSocketService, never()).startWebSocket(2L);
 
-        scheduler.runDueRepairsAt(now + TimeUnit.HOURS.toMillis(1) + TimeUnit.SECONDS.toMillis(1));
+        scheduler.runDueRepairsAt(now + TimeUnit.MINUTES.toMillis(15) + TimeUnit.SECONDS.toMillis(1));
         verify(webSocketService).startWebSocket(2L);
     }
 
@@ -100,7 +100,7 @@ class AutomaticConnectionRepairSchedulerTest {
 
         scheduler.runDueRepairsAt(now);
 
-        assertTrue(repairTimes().get(7L) >= now + TimeUnit.HOURS.toMillis(1));
+        assertTrue(repairTimes().get(7L) >= now + TimeUnit.MINUTES.toMillis(15));
     }
 
     @Test
@@ -115,7 +115,7 @@ class AutomaticConnectionRepairSchedulerTest {
 
         scheduler.runDueRepairsAt(now);
 
-        assertTrue(repairTimes().get(9L) >= now + TimeUnit.HOURS.toMillis(5));
+        assertTrue(repairTimes().get(9L) >= now + TimeUnit.HOURS.toMillis(2));
         verify(operationLogService).log(
                 org.mockito.ArgumentMatchers.eq(9L),
                 org.mockito.ArgumentMatchers.anyString(),
@@ -133,6 +133,16 @@ class AutomaticConnectionRepairSchedulerTest {
     @SuppressWarnings("unchecked")
     private Map<Long, Long> repairTimes() {
         return (Map<Long, Long>) ReflectionTestUtils.getField(scheduler, "nextRepairTimes");
+    }
+
+    @Test
+    void skipsRepairWhileSessionRenewalIsPending() {
+        when(accountMapper.selectList(any())).thenReturn(List.of(account(7L)));
+        when(webSocketTokenService.isSessionRenewalPending(7L)).thenReturn(true);
+        long now = System.currentTimeMillis();
+        repairTimes().put(7L, now - 1);
+        scheduler.runDueRepairsAt(now);
+        verify(webSocketService, never()).startWebSocket(7L);
     }
 
     private static XianyuAccount account(long id) {

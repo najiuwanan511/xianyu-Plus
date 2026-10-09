@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -109,6 +110,16 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
 
     /** Tracks the current verification episode so each account is notified only once. */
     private final Map<Long, Long> captchaNotificationTimes = new ConcurrentHashMap<>();
+    private final Map<Long, String> captchaNotifiedUrls = new ConcurrentHashMap<>();
+
+    @Value("${app.captcha.remote-enabled:false}")
+    private boolean captchaRemoteEnabled;
+
+    @Value("${app.captcha.remote-port:7900}")
+    private int captchaRemotePort = 7900;
+
+    @Value("${app.captcha.remote-url:}")
+    private String captchaRemoteUrl = "";
 
     /**
      * Token获取失败重试最大次数（参考Python: retry_count >= 2）
@@ -219,6 +230,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                     pendingCaptchaAccounts.remove(accountId);
                     captchaTimestamps.remove(accountId);
                     captchaNotificationTimes.remove(accountId);
+                    captchaNotifiedUrls.remove(accountId);
                     return cookieEntity.getWebsocketToken();
                 } else {
                     log.info("【账号{}】数据库中的Token已过期，需要重新获取", accountId);
@@ -717,6 +729,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
         pendingCaptchaAccounts.remove(accountId);
         captchaTimestamps.remove(accountId);
         captchaNotificationTimes.remove(accountId);
+        captchaNotifiedUrls.remove(accountId);
         updateRenewalStatus(accountId, "IDLE", "验证等待已清除，可重新刷新并连接", null);
         log.info("【账号{}】验证等待状态已清除", accountId);
     }
@@ -731,6 +744,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
         pendingCaptchaAccounts.remove(accountId);
         captchaTimestamps.remove(accountId);
         captchaNotificationTimes.remove(accountId);
+        captchaNotifiedUrls.remove(accountId);
         renewalStatuses.remove(accountId);
         log.info("Account {} token renewal and verification runtime state cleared", accountId);
     }
@@ -936,10 +950,16 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                     com.xianyusmart.constants.OperationConstants.TargetType.TOKEN,
                     String.valueOf(accountId), null, null, reason, null);
         }
-        Long previousNotification = captchaNotificationTimes.putIfAbsent(accountId, System.currentTimeMillis());
-        if (newVerificationEpisode && previousNotification == null) {
-            notifyCaptchaRequired(accountId, reason);
-        }
+        captchaNotifiedUrls.compute(accountId, (id, lastNotifiedUrl) -> {
+            boolean first = newVerificationEpisode && !captchaNotificationTimes.containsKey(id);
+            boolean refreshed = !storedUrl.isBlank() && !storedUrl.equals(lastNotifiedUrl);
+            if (first || refreshed) {
+                captchaNotificationTimes.put(id, System.currentTimeMillis());
+                notifyCaptchaRequired(id, reason);
+                return storedUrl;
+            }
+            return lastNotifiedUrl;
+        });
         if (newVerificationEpisode) {
             log.warn("【账号{}】需要安全验证，已暂停Token刷新和WebSocket重连", accountId);
         } else {
@@ -971,7 +991,12 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
             java.util.Map<String, Object> params = new java.util.HashMap<>();
             params.put("credentialType", "WebSocket Token");
             params.put("reason", reason);
-            params.put("action", "请使用对应账号的浏览器登录环境打开 https://www.goofish.com/im，完成平台验证后扫码或手动更新最新Cookie");
+            String remoteLocation = captchaRemoteUrl == null || captchaRemoteUrl.isBlank()
+                    ? "服务器 " + captchaRemotePort + " 端口的 /vnc.html" : captchaRemoteUrl;
+            params.put("action", captchaRemoteEnabled
+                    ? "请先在账号管理发起远程验证，再打开 VNC 远程浏览器（" + remoteLocation
+                        + "），在该账号验证窗口内完成滑块；验证通过后系统会尝试恢复连接。请勿反复扫码或直接打开过期验证链接。"
+                    : "账号需要完成滑块验证。请在账号管理配置 VNC 远程验证，或使用对应账号浏览器登录 https://www.goofish.com/im 完成验证后更新Cookie。");
             notificationChannelService.dispatchMessage("CREDENTIAL_UPDATE_REQUIRED", accountId, params);
         } catch (Exception exception) {
             log.warn("【账号{}】安全验证通知发送失败: {}", accountId, exception.getMessage());
@@ -1083,6 +1108,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                 pendingCaptchaAccounts.remove(accountId);
                 captchaTimestamps.remove(accountId);
                 captchaNotificationTimes.remove(accountId);
+                captchaNotifiedUrls.remove(accountId);
                 updateRenewalStatus(accountId, "SUCCESS", "WebSocket Token已刷新", null);
                 log.info("【账号{}】Token已保存到数据库，过期时间: {}", accountId,
                         new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")

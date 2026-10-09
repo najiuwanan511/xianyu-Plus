@@ -39,16 +39,16 @@ public class AutomaticConnectionRepairScheduler {
     @Autowired(required = false)
     private OnlineUpdateMaintenanceService onlineUpdateMaintenanceService;
 
-    @Value("${app.websocket.automatic-repair.enabled:false}")
+    @Value("${app.websocket.automatic-repair.enabled:true}")
     private boolean enabled;
 
-    @Value("${app.websocket.automatic-repair.min-hours:5}")
+    @Value("${app.websocket.automatic-repair.min-hours:2}")
     private int minHours;
 
-    @Value("${app.websocket.automatic-repair.max-hours:8}")
+    @Value("${app.websocket.automatic-repair.max-hours:4}")
     private int maxHours;
 
-    @Value("${app.websocket.automatic-repair.account-spacing-minutes:60}")
+    @Value("${app.websocket.automatic-repair.account-spacing-minutes:15}")
     private int accountSpacingMinutes;
 
     private volatile long lastRepairStartedAt;
@@ -106,7 +106,8 @@ public class AutomaticConnectionRepairScheduler {
         }
 
         Long accountId = dueAccount.getId();
-        if (webSocketTokenService.isCaptchaPending(accountId)) {
+        if (webSocketTokenService.isCaptchaPending(accountId)
+                || webSocketTokenService.isSessionRenewalPending(accountId)) {
             nextRepairTimes.put(accountId, now + spacingMillis);
             log.info("【自动连接恢复】账号 {} 正在等待安全验证，本次跳过", accountId);
             return;
@@ -134,7 +135,8 @@ public class AutomaticConnectionRepairScheduler {
             }
             XianyuAccount account = accountMapper.selectById(accountId);
             if (account == null || !Integer.valueOf(1).equals(account.getStatus())
-                    || webSocketTokenService.isCaptchaPending(accountId)) {
+                    || webSocketTokenService.isCaptchaPending(accountId)
+                    || webSocketTokenService.isSessionRenewalPending(accountId)) {
                 log.info("【自动连接恢复】账号 {} 已禁用、不存在或正在等待安全验证，本次取消", accountId);
                 return;
             }
@@ -157,7 +159,8 @@ public class AutomaticConnectionRepairScheduler {
                 log.debug("【自动连接恢复】账号 {} 已在线，不刷新凭证也不重连", accountId);
                 return;
             }
-            if (webSocketTokenService.isCaptchaPending(accountId)) {
+            if (webSocketTokenService.isCaptchaPending(accountId)
+                    || webSocketTokenService.isSessionRenewalPending(accountId)) {
                 log.info("【自动连接恢复】账号 {} 正在等待安全验证，本次取消", accountId);
                 return;
             }

@@ -99,6 +99,11 @@ jobs:
           chmod +x mvnw
           ./mvnw clean package
 
+      - name: 校验部署配置迁移
+        run: |
+          python3 -m unittest discover -s deploy/tests -v
+          bash -n update.sh
+
       - name: 生成正式版本附件
         id: artifact
         shell: bash

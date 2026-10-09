@@ -21,9 +21,9 @@ public class WebSocketConfig {
     
     /**
      * 心跳超时（秒）
-     * 参考Python: HEARTBEAT_TIMEOUT = 5
+     * 在心跳间隔之外额外等待的秒数
      */
-    private int heartbeatTimeout = 5;
+    private int heartbeatTimeout = 10;
     
     /**
      * Token重试间隔（秒）

@@ -645,6 +645,8 @@ public class WebSocketController {
             // Cookie保存成功后立即清理旧凭证状态并重建连接
             boolean connected = !accountDisabled
                     && webSocketService.restartAfterCredentialUpdate(reqDTO.getXianyuAccountId());
+            boolean needVerification = !accountDisabled && !connected
+                    && webSocketTokenService.isCaptchaPending(reqDTO.getXianyuAccountId());
             
             // 记录操作日志
             operationLogService.log(reqDTO.getXianyuAccountId(),
@@ -661,7 +663,13 @@ public class WebSocketController {
                     ? "Cookie更新成功；账号保持禁用，启用后再建立连接"
                     : connected
                         ? "Cookie更新成功，WebSocket已重连"
-                        : "Cookie更新成功，WebSocket正在重连");
+                        : needVerification
+                            ? "Cookie更新成功，但账号需要完成滑块验证。" + (captchaRemoteEnabled
+                                ? "请在账号管理发起远程验证，再打开 VNC（" + (captchaRemoteUrl == null || captchaRemoteUrl.isBlank()
+                                    ? "服务器 " + captchaRemotePort + " 端口 /vnc.html" : captchaRemoteUrl)
+                                    + "）完成滑块，验证通过后系统会尝试恢复连接。"
+                                : "请启用远程验证，或在对应账号浏览器完成验证后更新Cookie；自动重连已暂停。")
+                            : "Cookie更新成功，WebSocket正在重连");
             return ResultObject.success(respDTO);
         } catch (Exception e) {
             log.error("更新Cookie失败", e);
