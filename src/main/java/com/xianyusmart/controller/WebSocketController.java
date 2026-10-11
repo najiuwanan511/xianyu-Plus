@@ -5,6 +5,7 @@ import com.xianyusmart.entity.XianyuAccount;
 import com.xianyusmart.controller.dto.UpdateCookieReqDTO;
 import com.xianyusmart.controller.dto.UpdateCookieRespDTO;
 import com.xianyusmart.service.CookieRefreshService;
+import com.xianyusmart.service.Mh5tkRefreshResult;
 import com.xianyusmart.service.WebSocketService;
 import com.xianyusmart.service.ImageDimensionService;
 import lombok.Data;
@@ -710,7 +711,10 @@ public class WebSocketController {
             
             // 刷新_m_h5_tk token
             log.info("【账号{}】开始刷新_m_h5_tk token...", reqDTO.getXianyuAccountId());
-            boolean mh5tkSuccess = tokenRefreshService.refreshMh5tkToken(reqDTO.getXianyuAccountId());
+            Mh5tkRefreshResult mh5tkResult = tokenRefreshService.refreshMh5tkTokenDetailed(reqDTO.getXianyuAccountId());
+            // 手动刷新场景下"未变化"说明 Token 仍然有效，视为成功；
+            // 业务恢复路径（OrderDetailFetcher）中 UNCHANGED 会被当作"未恢复"处理
+            boolean mh5tkSuccess = mh5tkResult != Mh5tkRefreshResult.FAILED;
             respDTO.setMh5tkRefreshed(mh5tkSuccess);
             
             // 刷新WebSocket token
@@ -719,8 +723,9 @@ public class WebSocketController {
             respDTO.setWsTokenRefreshed(wsTokenSuccess);
             
             if (mh5tkSuccess && wsTokenSuccess) {
-                respDTO.setMessage("✅ 所有Token刷新成功");
-                log.info("【账号{}】✅ 所有Token刷新成功", reqDTO.getXianyuAccountId());
+                String mh5tkNote = mh5tkResult == Mh5tkRefreshResult.UNCHANGED ? "（_m_h5_tk 未变化，仍然有效）" : "";
+                respDTO.setMessage("✅ 所有Token刷新成功" + mh5tkNote);
+                log.info("【账号{}】✅ 所有Token刷新成功{}", reqDTO.getXianyuAccountId(), mh5tkNote);
                 
                 operationLogService.log(reqDTO.getXianyuAccountId(),
                         com.xianyusmart.constants.OperationConstants.Type.REFRESH,

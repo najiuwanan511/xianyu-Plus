@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -35,6 +36,19 @@ public class DeliveryTaskServiceImpl implements DeliveryTaskService {
 
     @Value("${app.delivery.max-attempts:3}")
     private int maxAttempts;
+
+    /**
+     * 买家身份核验连续失败超过该次数后，不再 5 分钟空转重试，
+     * 而是把任务挂起并通知人工重新扫码登录。
+     */
+    @Value("${app.delivery.max-verification-deferrals:3}")
+    private int maxVerificationDeferrals;
+
+    /**
+     * 任务连续"买家身份待核验"次数。进程内计数，重启后重新累计
+     * （最坏情况只是多几次 5 分钟重试，不影响正确性）。
+     */
+    private final Map<Long, Integer> buyerVerificationDeferrals = new ConcurrentHashMap<>();
 
     public DeliveryTaskServiceImpl(XianyuGoodsOrderMapper orderMapper) {
         this.orderMapper = orderMapper;
@@ -84,6 +98,7 @@ public class DeliveryTaskServiceImpl implements DeliveryTaskService {
 
     @Override
     public void complete(Long taskId, String workerId) {
+        buyerVerificationDeferrals.remove(taskId);
         XianyuGoodsOrder task = orderMapper.selectById(taskId);
         if (orderMapper.completeTask(taskId, workerId) == 0) {
             log.warn("任务租约已失效，忽略完成操作: taskId={}", taskId);
@@ -94,6 +109,7 @@ public class DeliveryTaskServiceImpl implements DeliveryTaskService {
 
     @Override
     public void retryOrFail(Long taskId, String workerId, String errorMessage) {
+        buyerVerificationDeferrals.remove(taskId);
         XianyuGoodsOrder task = orderMapper.selectById(taskId);
         if (task == null || !workerId.equals(task.getLeaseOwner())) {
             log.warn("任务租约已失效，忽略重试操作: taskId={}", taskId);
@@ -118,14 +134,47 @@ public class DeliveryTaskServiceImpl implements DeliveryTaskService {
     public void deferBuyerVerification(Long taskId, String workerId, String reason) {
         String safeReason = reason == null ? "订单买家身份暂时无法核验，卡密未发送" :
                 reason.substring(0, Math.min(reason.length(), 500));
+        int consecutive = buyerVerificationDeferrals.getOrDefault(taskId, 0) + 1;
+
+        if (consecutive >= maxVerificationDeferrals) {
+            buyerVerificationDeferrals.remove(taskId);
+            suspendBuyerVerification(taskId, workerId, safeReason, consecutive);
+            return;
+        }
+
+        buyerVerificationDeferrals.put(taskId, consecutive);
         if (orderMapper.deferBuyerVerificationTask(taskId, workerId, safeReason) == 0) {
+            buyerVerificationDeferrals.remove(taskId);
             log.warn("任务租约已失效，忽略买家身份延迟核验: taskId={}", taskId);
         } else {
-            log.warn("订单买家身份待核验，五分钟后重试: taskId={}", taskId);
+            log.warn("订单买家身份待核验，五分钟后重试: taskId={}, 连续{}次", taskId, consecutive);
         }
     }
+
+    /**
+     * 买家身份核验连续失败且凭证无法自动恢复：停止 5 分钟空转重试，
+     * 把任务挂起到 SUSPENDED 并通知人工重新扫码登录。用户重新登录后
+     * 可在页面手动重试该任务，调度器不会自动领取挂起任务。
+     */
+    private void suspendBuyerVerification(Long taskId, String workerId, String safeReason, int consecutive) {
+        String suspendReason = (safeReason + "；连续" + consecutive
+                + "次核验失败且凭证无法自动恢复，任务已挂起，请重新扫码登录后手动重试");
+        // last_error_message / fail_reason 列宽 500，截断避免严格模式报错
+        suspendReason = suspendReason.substring(0, Math.min(suspendReason.length(), 500));
+        if (orderMapper.suspendBuyerVerificationTask(taskId, workerId, suspendReason) == 0) {
+            log.warn("任务租约已失效，忽略买家身份挂起: taskId={}", taskId);
+            return;
+        }
+        log.warn("订单买家身份核验连续失败{}次，任务已挂起等待人工处理: taskId={}", consecutive, taskId);
+        XianyuGoodsOrder task = orderMapper.selectById(taskId);
+        if (task != null) {
+            notifyException(task, "自动发货任务已挂起", suspendReason);
+        }
+    }
+
     @Override
     public void markReviewRequired(Long taskId, String workerId, String errorMessage) {
+        buyerVerificationDeferrals.remove(taskId);
         String safeMessage = errorMessage == null ? "发送结果不确定，请人工核对" :
                 errorMessage.substring(0, Math.min(errorMessage.length(), 500));
         if (orderMapper.markTaskReviewRequired(taskId, safeMessage, workerId) == 0) {
