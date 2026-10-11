@@ -8,8 +8,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 class DeliveryTaskServiceImplTest {
 
@@ -75,5 +78,26 @@ class DeliveryTaskServiceImplTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void suspendsBuyerVerificationTaskAfterMaxConsecutiveDeferrals() {
+        XianyuGoodsOrderMapper orderMapper = mock(XianyuGoodsOrderMapper.class);
+        DeliveryTaskServiceImpl service = new DeliveryTaskServiceImpl(orderMapper);
+        ReflectionTestUtils.setField(service, "maxVerificationDeferrals", 2);
+        String reason = "BUYER_VERIFICATION_PENDING: recipient not verified";
+        when(orderMapper.deferBuyerVerificationTask(eq(3L), eq("worker-a"), anyString())).thenReturn(1);
+        when(orderMapper.suspendBuyerVerificationTask(eq(3L), eq("worker-a"), anyString())).thenReturn(1);
+        XianyuGoodsOrder task = new XianyuGoodsOrder();
+        task.setXianyuAccountId(7L);
+        task.setOrderId("order-1");
+        when(orderMapper.selectById(3L)).thenReturn(task);
+
+        service.deferBuyerVerification(3L, "worker-a", reason);
+        service.deferBuyerVerification(3L, "worker-a", reason);
+
+        // 第一次走 5 分钟延迟重试，第二次达到阈值后挂起，不再空转
+        verify(orderMapper, times(1)).deferBuyerVerificationTask(eq(3L), eq("worker-a"), anyString());
+        verify(orderMapper, times(1)).suspendBuyerVerificationTask(eq(3L), eq("worker-a"), anyString());
     }
 }

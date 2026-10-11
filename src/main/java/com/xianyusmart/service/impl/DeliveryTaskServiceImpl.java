@@ -40,9 +40,13 @@ public class DeliveryTaskServiceImpl implements DeliveryTaskService {
     /**
      * 买家身份核验连续失败超过该次数后，不再 5 分钟空转重试，
      * 而是把任务挂起并通知人工重新扫码登录。
+     *
+     * <p>注意：字段初始化为 3 而不是依赖 @Value 的默认值，
+     * 因为单测中直接 new 出实例时不会经过 Spring 注入；
+     * 有 Spring 时 @Value 会按配置覆盖。</p>
      */
     @Value("${app.delivery.max-verification-deferrals:3}")
-    private int maxVerificationDeferrals;
+    private int maxVerificationDeferrals = 3;
 
     /**
      * 任务连续"买家身份待核验"次数。进程内计数，重启后重新累计
