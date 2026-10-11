@@ -22,6 +22,8 @@ class TokenRefreshSchedulingTest {
         service.initRefreshSchedules();
         service.scheduledCookieKeepAlive();
         service.scheduledRefreshWebSocketToken();
+        // 主动 _m_h5_tk 刷新默认关闭：不得触碰任何账号数据
+        service.scheduledProactiveMh5tkRefresh();
 
         assertEquals(Long.MAX_VALUE,
                 (long) ReflectionTestUtils.getField(service, "nextCookieKeepAliveTime"));

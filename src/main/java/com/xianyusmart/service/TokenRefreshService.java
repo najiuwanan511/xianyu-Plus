@@ -7,12 +7,25 @@ package com.xianyusmart.service;
 public interface TokenRefreshService {
     
     /**
-     * 刷新指定账号的_m_h5_tk token
-     * 
+     * 刷新指定账号的_m_h5_tk token（诚实三态版本）。
+     *
+     * <p>只有真正拿到新 Token 才返回 {@link Mh5tkRefreshResult#REFRESHED}；
+     * Token 未变化返回 {@link Mh5tkRefreshResult#UNCHANGED}，调用方不得视为恢复成功。</p>
+     *
      * @param accountId 账号ID
-     * @return 是否刷新成功
+     * @return 刷新结果
      */
-    boolean refreshMh5tkToken(Long accountId);
+    Mh5tkRefreshResult refreshMh5tkTokenDetailed(Long accountId);
+
+    /**
+     * 刷新指定账号的_m_h5_tk token
+     *
+     * @param accountId 账号ID
+     * @return 只有真正拿到新 Token 才返回 true；未变化或失败都返回 false
+     */
+    default boolean refreshMh5tkToken(Long accountId) {
+        return refreshMh5tkTokenDetailed(accountId) == Mh5tkRefreshResult.REFRESHED;
+    }
     
     /**
      * 刷新指定账号的WebSocket token
