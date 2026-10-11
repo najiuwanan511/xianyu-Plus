@@ -328,6 +328,18 @@ public interface XianyuGoodsOrderMapper {
     int deferBuyerVerificationTask(@Param("id") Long id, @Param("workerId") String workerId,
                                    @Param("reason") String reason);
 
+    /**
+     * 挂起买家身份核验任务：凭证无法自动恢复时停止 5 分钟空转重试，
+     * 调度器不再领取（delivery_status 不在 PENDING/RETRY_WAIT 范围内），
+     * 等待人工重新扫码登录后手动重试。
+     */
+    @Update("UPDATE xianyu_goods_order SET delivery_status = 'SUSPENDED', state = 0, " +
+            "next_retry_time = NULL, lease_owner = NULL, lease_expire_time = NULL, " +
+            "last_error_code = 'TOKEN_REFRESH_FAILED', last_error_message = #{reason}, fail_reason = #{reason} " +
+            "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} AND lease_expire_time > NOW(3)")
+    int suspendBuyerVerificationTask(@Param("id") Long id, @Param("workerId") String workerId,
+                                     @Param("reason") String reason);
+
     @Update("UPDATE xianyu_goods_order SET delivery_status = 'REVIEW_REQUIRED', next_retry_time = NULL, " +
             "lease_owner = NULL, lease_expire_time = NULL, last_error_code = 'DELIVERY_UNCERTAIN', last_error_message = #{errorMessage} " +
             "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} AND lease_expire_time > NOW(3)")

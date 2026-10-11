@@ -7,6 +7,7 @@ import com.xianyusmart.entity.XianyuCookie;
 import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.mapper.XianyuCookieMapper;
 import com.xianyusmart.service.CookieRefreshService;
+import com.xianyusmart.service.Mh5tkRefreshResult;
 import com.xianyusmart.service.OperationLogService;
 import com.xianyusmart.service.TokenRefreshService;
 import com.xianyusmart.service.WebSocketTokenService;
@@ -119,16 +120,32 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
      * 4. hasLogin成功后，重新尝试获取_m_h5_tk
      */
     @Override
-    public boolean refreshMh5tkToken(Long accountId) {
+    public Mh5tkRefreshResult refreshMh5tkTokenDetailed(Long accountId) {
         if (accountId == null) {
-            return false;
+            return Mh5tkRefreshResult.FAILED;
         }
         return credentialUpdateCoordinator.withAccountLock(accountId,
                 () -> refreshMh5tkTokenLocked(accountId));
     }
 
-    private boolean refreshMh5tkTokenLocked(Long accountId) {
+    private Mh5tkRefreshResult refreshMh5tkTokenLocked(Long accountId) {
         return refreshMh5tkTokenWithRetry(accountId, 0, false);
+    }
+
+    /**
+     * 根据刷新前后的 _m_h5_tk 判定刷新结果。
+     *
+     * <p>注意：Token 未变化时返回 {@link Mh5tkRefreshResult#UNCHANGED} 而不是成功。
+     * 该方法通常在某个真实业务接口已经报告凭证失效后被调用，此时"没变化"意味着
+     * 本次刷新没有拿到新 Token，旧 Token 很可能已经失效；调用方必须把它当作
+     * "未恢复"处理，绝不能拿旧 Token 继续重试（曾导致自动发货任务在
+     * BUYER_VERIFICATION_PENDING 状态下每 5 分钟空转）。</p>
+     */
+    static Mh5tkRefreshResult resolveRefreshResult(String oldMh5tk, String newMh5tk) {
+        if (newMh5tk != null && !newMh5tk.isEmpty() && !newMh5tk.equals(oldMh5tk)) {
+            return Mh5tkRefreshResult.REFRESHED;
+        }
+        return Mh5tkRefreshResult.UNCHANGED;
     }
     
     /**
@@ -138,9 +155,9 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
      * @param accountId 账号ID
      * @param retryCount 当前重试次数
      * @param hasLoginAttempted 是否已经尝试过hasLogin刷新
-     * @return 是否成功
+     * @return 刷新结果（诚实三态）
      */
-    private boolean refreshMh5tkTokenWithRetry(Long accountId, int retryCount, boolean hasLoginAttempted) {
+    private Mh5tkRefreshResult refreshMh5tkTokenWithRetry(Long accountId, int retryCount, boolean hasLoginAttempted) {
         try {
             log.info("【账号{}】开始刷新_m_h5_tk token... (重试次数: {})", accountId, retryCount);
 
@@ -150,7 +167,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
             );
             if (cookie == null || cookie.getCookieText() == null) {
                 log.warn("【账号{}】未找到Cookie，无法刷新token", accountId);
-                return false;
+                return Mh5tkRefreshResult.FAILED;
             }
 
             String oldCookieStr = cookie.getCookieText();
@@ -173,9 +190,8 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
                 if (newMh5tk != null && !newMh5tk.isEmpty()) {
                     Map<String, String> oldCookies = XianyuSignUtils.parseCookies(oldCookieStr);
                     String oldMh5tk = oldCookies.get("_m_h5_tk");
-                    boolean mh5tkChanged = !newMh5tk.equals(oldMh5tk);
 
-                    if (mh5tkChanged) {
+                    if (resolveRefreshResult(oldMh5tk, newMh5tk) == Mh5tkRefreshResult.REFRESHED) {
                         cookie.setCookieText(newCookieStr);
                         cookie.setMH5Tk(newMh5tk);
                         cookieMapper.updateById(cookie);
@@ -191,10 +207,10 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
                             String.valueOf(accountId),
                             null, null, null, null);
 
-                        return true;
+                        return Mh5tkRefreshResult.REFRESHED;
                     } else {
-                        log.info("【账号{}】_m_h5_tk未变化，Token仍然有效", accountId);
-                        return true;
+                        log.warn("【账号{}】_m_h5_tk未变化，本次刷新未拿到新Token，不能视为恢复成功", accountId);
+                        return Mh5tkRefreshResult.UNCHANGED;
                     }
                 }
 
@@ -216,9 +232,9 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
      * @param retryCount 当前重试次数
      * @param hasLoginAttempted 是否已经尝试过hasLogin刷新
      * @param reason 失败原因
-     * @return 是否成功
+     * @return 刷新结果（诚实三态）
      */
-    private boolean handleMh5tkRefreshFailure(Long accountId, int retryCount, boolean hasLoginAttempted, String reason) {
+    private Mh5tkRefreshResult handleMh5tkRefreshFailure(Long accountId, int retryCount, boolean hasLoginAttempted, String reason) {
         // 参考Python: retry_count < 2 时直接重试
         if (retryCount < 2) {
             log.warn("【账号{}】_m_h5_tk刷新失败({})，准备重试... (重试次数: {}/2)",
@@ -256,7 +272,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
                 String.valueOf(accountId),
                 null, null, "hasLogin后仍无法获取Token", null);
             
-            return false;
+            return Mh5tkRefreshResult.FAILED;
         }
         
         // 参考Python: retry_count >= 2 时，调用hasLogin刷新Cookie后重试
@@ -270,9 +286,9 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
      * 
      * @param accountId 账号ID
      * @param hasLoginRetryCount hasLogin重试次数
-     * @return 是否成功
+     * @return 刷新结果（诚实三态）
      */
-    private boolean refreshMh5tkViaHasLogin(Long accountId, int hasLoginRetryCount) {
+    private Mh5tkRefreshResult refreshMh5tkViaHasLogin(Long accountId, int hasLoginRetryCount) {
         if (hasLoginRetryCount >= 2) {
             log.error("【账号{}】hasLogin刷新重试次数已达上限，Cookie已彻底过期", accountId);
             
@@ -293,7 +309,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
                 String.valueOf(accountId),
                 null, null, "Cookie过期且自动刷新失败", null);
             
-            return false;
+            return Mh5tkRefreshResult.FAILED;
         }
         
         log.info("【账号{}】开始通过hasLogin刷新Cookie... (重试次数: {}/2)", 
@@ -505,11 +521,12 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
 
             for (XianyuAccount account : accounts) {
                 if (account.getStatus() == 1) { // 只刷新正常状态的账号
-                    boolean success = refreshMh5tkToken(account.getId());
-                    if (success) {
-                        successCount++;
-                    } else {
+                    // 批量场景下"未变化"视为正常（Token 仍然有效），只有 FAILED 计为失败
+                    Mh5tkRefreshResult result = refreshMh5tkTokenDetailed(account.getId());
+                    if (result == Mh5tkRefreshResult.FAILED) {
                         failCount++;
+                    } else {
+                        successCount++;
                     }
 
                     // 随机间隔5-10秒，避免频繁请求被检测
@@ -527,6 +544,55 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
 
     private final Map<Long, Long> lastCookieExpireNotifyTimes = new HashMap<>();
     private static final long COOKIE_NOTIFY_INTERVAL_MS = 10 * 60 * 1000L;
+
+    /**
+     * 主动 _m_h5_tk 刷新：不等订单接口报错，提前发现凭证问题。
+     *
+     * <p>默认关闭（与"按需刷新"策略保持一致），可通过 credentialKeepAliveEnabled 开启；
+     * 即使开启，每个账号最多每 2 小时尝试一次，且"未变化"视为正常，不报错、不打扰。
+     * 刷新失败只记日志，真正的恢复仍由业务接口调用时的按需刷新与任务挂起机制处理。</p>
+     */
+    private static final long PROACTIVE_MH5TK_REFRESH_INTERVAL_MS = 2 * 60 * 60 * 1000L;
+    private final Map<Long, Long> lastProactiveMh5tkRefreshTimes = new HashMap<>();
+
+    @Scheduled(fixedDelay = 30 * ONE_MINUTE_MS, initialDelay = 10 * ONE_MINUTE_MS)
+    public void scheduledProactiveMh5tkRefresh() {
+        if (!webSocketConfig.isCredentialKeepAliveEnabled()) {
+            return;
+        }
+        try {
+            List<XianyuAccount> accounts = accountMapper.selectList(null);
+            long now = System.currentTimeMillis();
+
+            for (XianyuAccount account : accounts) {
+                if (account.getStatus() != 1 || webSocketTokenService.isCaptchaPending(account.getId())) {
+                    continue;
+                }
+                Long lastTime = lastProactiveMh5tkRefreshTimes.get(account.getId());
+                if (lastTime != null && now - lastTime < PROACTIVE_MH5TK_REFRESH_INTERVAL_MS) {
+                    continue;
+                }
+                lastProactiveMh5tkRefreshTimes.put(account.getId(), now);
+
+                try {
+                    Mh5tkRefreshResult result = refreshMh5tkTokenDetailed(account.getId());
+                    if (result == Mh5tkRefreshResult.FAILED) {
+                        log.warn("【账号{}】主动_m_h5_tk刷新失败，将在业务接口调用时按需重试", account.getId());
+                    } else {
+                        log.debug("【账号{}】主动_m_h5_tk刷新完成: {}", account.getId(), result);
+                    }
+                } catch (Exception e) {
+                    log.warn("【账号{}】主动_m_h5_tk刷新异常: {}", account.getId(), e.getMessage());
+                }
+
+                // 随机间隔5-15秒，避免多账号同时请求
+                int randomInterval = 5000 + new java.util.Random().nextInt(10001);
+                Thread.sleep(randomInterval);
+            }
+        } catch (Exception e) {
+            log.error("主动_m_h5_tk刷新任务失败", e);
+        }
+    }
 
     private void triggerCookieExpireNotify(Long accountId) {
         try {
