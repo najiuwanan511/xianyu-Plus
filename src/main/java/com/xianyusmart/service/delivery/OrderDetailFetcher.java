@@ -2,6 +2,7 @@ package com.xianyusmart.service.delivery;
 
 import com.xianyusmart.service.AccountService;
 import com.xianyusmart.service.GoodsSkuService;
+import com.xianyusmart.service.Mh5tkRefreshResult;
 import com.xianyusmart.service.TokenRefreshService;
 import com.xianyusmart.utils.XianyuApiCallUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -128,13 +129,18 @@ public class OrderDetailFetcher {
 
         log.warn("【账号{}】订单详情令牌已过期，主动刷新_m_h5_tk后重试: orderId={}", accountId, orderId);
         try {
-            if (!tokenRefreshService.refreshMh5tkToken(accountId)) {
-                log.warn("【账号{}】订单详情_m_h5_tk刷新失败，等待后续重试: orderId={}", accountId, orderId);
+            Mh5tkRefreshResult refreshResult = tokenRefreshService.refreshMh5tkTokenDetailed(accountId);
+            if (refreshResult != Mh5tkRefreshResult.REFRESHED) {
+                // 熔断：没有拿到新 Token，继续用旧 Token 重试只会重复失败。
+                // 直接返回失败结果，让上层挂起任务等待人工处理，而不是空转重试。
+                log.warn("【账号{}】订单详情_m_h5_tk刷新未生效(result={})，不再用旧Token重试: orderId={}",
+                        accountId, refreshResult, orderId);
                 return result;
             }
             String refreshedCookie = accountService.getCookieByAccountId(accountId);
-            if (refreshedCookie == null || refreshedCookie.isBlank()) {
-                log.warn("【账号{}】订单详情令牌刷新后未读取到最新Cookie: orderId={}", accountId, orderId);
+            if (refreshedCookie == null || refreshedCookie.isBlank() || refreshedCookie.equals(cookieStr)) {
+                // 纵深防御：即使刷新报告成功，Cookie 没有实际变化也不重试
+                log.warn("【账号{}】订单详情令牌刷新后Cookie未变化，不再重试: orderId={}", accountId, orderId);
                 return result;
             }
             return xianyuApiCallUtils.callApiWithRetry(
