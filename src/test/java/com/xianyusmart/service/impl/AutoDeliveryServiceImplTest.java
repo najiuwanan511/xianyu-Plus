@@ -32,6 +32,73 @@ import static org.mockito.Mockito.when;
 class AutoDeliveryServiceImplTest {
 
     @Test
+    void exceptionAfterExternalRequestStartsRequiresReviewInsteadOfReplay() {
+        var service = new AutoDeliveryServiceImpl();
+        var orders = mock(XianyuGoodsOrderMapper.class);
+        var goods = mock(XianyuGoodsConfigMapper.class);
+        var accounts = mock(com.xianyusmart.mapper.XianyuAccountMapper.class);
+        var configs = mock(XianyuGoodsAutoDeliveryConfigMapper.class);
+        var details = mock(OrderDetailFetcher.class);
+        var platform = mock(com.xianyusmart.service.OrderService.class);
+        var resolver = mock(com.xianyusmart.service.delivery.DeliveryStrategyResolver.class);
+        var order = new XianyuGoodsOrder();
+        order.setId(11L);
+        order.setBuyerUserId("buyer-42");
+        order.setLeaseOwner("worker");
+        var goodsConfig = new XianyuGoodsConfig();
+        goodsConfig.setXianyuAutoDeliveryOn(1);
+        var config = new XianyuGoodsAutoDeliveryConfig();
+        config.setDeliveryMode(1);
+        var detail = new OrderDetailFetcher.OrderDetailInfo();
+        detail.buyerUserId = "buyer-42";
+        when(orders.selectById(11L)).thenReturn(order);
+        when(goods.selectByAccountAndGoodsId(7L, "goods-1")).thenReturn(goodsConfig);
+        when(configs.findByAccountIdAndGoodsIdNoSku(7L, "goods-1")).thenReturn(config);
+        when(details.fetch(7L, "goods-1", "order-1")).thenReturn(detail);
+        when(accounts.selectList(null)).thenReturn(java.util.List.of());
+        when(resolver.resolve(eq(1), org.mockito.ArgumentMatchers.any())).thenReturn("delivery content");
+        when(platform.consignDummyDelivery(eq(7L), eq("order-1"), eq("delivery content"), org.mockito.ArgumentMatchers.anyList()))
+                .thenThrow(new IllegalStateException("connection lost after write"));
+        when(orders.updateLeasedDeliveryResult(eq(11L), eq("worker"), eq(-1), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString())).thenReturn(1);
+        ReflectionTestUtils.setField(service, "orderMapper", orders);
+        ReflectionTestUtils.setField(service, "goodsConfigMapper", goods);
+        ReflectionTestUtils.setField(service, "accountMapper", accounts);
+        ReflectionTestUtils.setField(service, "autoDeliveryConfigMapper", configs);
+        ReflectionTestUtils.setField(service, "orderDetailFetcher", details);
+        ReflectionTestUtils.setField(service, "orderService", platform);
+        ReflectionTestUtils.setField(service, "deliveryStrategyResolver", resolver);
+        ReflectionTestUtils.setField(service, "messageTemplateRenderer", new com.xianyusmart.service.delivery.DeliveryMessageTemplateRenderer());
+        ReflectionTestUtils.setField(service, "goodsSkuService", mock(GoodsSkuService.class));
+        ReflectionTestUtils.setField(service, "webSocketService", mock(WebSocketService.class));
+        ReflectionTestUtils.setField(service, "blacklistService", mock(BuyerBlacklistService.class));
+        service.executeDelivery(11L, 7L, "goods-1", "buyer-42@goofish", "order-1", "buyer", false, () -> true, () -> true);
+        verify(platform).consignDummyDelivery(eq(7L), eq("order-1"), eq("delivery content"), org.mockito.ArgumentMatchers.anyList());
+        verify(orders).updateLeasedDeliveryResult(eq(11L), eq("worker"), eq(-1), eq(""),
+                argThat(reason -> reason.startsWith(AutoDeliveryServiceImpl.PARTIAL_DELIVERY_REVIEW_PREFIX)));
+    }
+
+    @Test
+    void imageSendingStopsWhenLeaseIsLostBeforeExternalAttempt() {
+        var service = new AutoDeliveryServiceImpl();
+        var dimensions = mock(ImageDimensionService.class);
+        var socket = mock(WebSocketService.class);
+        var config = new XianyuGoodsAutoDeliveryConfig();
+        config.setAutoDeliveryImageUrl("https://img.example.test/a.jpg");
+        when(dimensions.resolve(config.getAutoDeliveryImageUrl())).thenReturn(new ImageDimensionService.ImageDimensions(10, 10));
+        ReflectionTestUtils.setField(service, "imageDimensionService", dimensions);
+        ReflectionTestUtils.setField(service, "webSocketService", socket);
+        ReflectionTestUtils.setField(service, "blacklistService", mock(BuyerBlacklistService.class));
+        java.util.function.BooleanSupplier denied = () -> false;
+        java.util.function.BooleanSupplier allowed = () -> true;
+        assertThrows(RuntimeException.class, () -> ReflectionTestUtils.invokeMethod(service, "sendDeliveryImages",
+                7L, "goods-1", "cid-1", "buyer-42", config, false, denied, allowed));
+        org.mockito.Mockito.verifyNoInteractions(socket);
+        assertThrows(RuntimeException.class, () -> ReflectionTestUtils.invokeMethod(service, "sendDeliveryImages",
+                7L, "goods-1", "cid-1", "buyer-42", config, false, allowed, denied));
+        org.mockito.Mockito.verifyNoInteractions(socket);
+    }
+
+    @Test
     void sendsDeliveryImagesWithTheirActualDimensions() {
         ImageDimensionService dimensionService = mock(ImageDimensionService.class);
         WebSocketService webSocketService = mock(WebSocketService.class);

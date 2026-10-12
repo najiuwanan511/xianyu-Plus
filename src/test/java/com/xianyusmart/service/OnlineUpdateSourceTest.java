@@ -30,11 +30,13 @@ class OnlineUpdateSourceTest {
         assertTrue(agent.contains("wait_for_app"));
         assertTrue(agent.contains("maintenance.flag"));
         assertTrue(agent.contains("wait_for_business_idle"));
+        assertTrue(agent.contains("FROM xianyu_zero_bridge_order WHERE status IN"));
         for (String source : new String[] {
                 "src/main/java/com/xianyusmart/service/DeliveryTaskScheduler.java",
                 "src/main/java/com/xianyusmart/service/ConfirmShipmentTaskScheduler.java",
                 "src/main/java/com/xianyusmart/service/RateTaskScheduler.java",
                 "src/main/java/com/xianyusmart/service/RedFlowerTaskScheduler.java",
+                "src/main/java/com/xianyusmart/service/impl/ZeroBridgeScheduler.java",
                 "src/main/java/com/xianyusmart/service/reply/AutoReplyDelayServiceImpl.java"
         }) {
             assertTrue(Files.readString(Path.of(source)).contains("onlineUpdateMaintenanceService.isActive()"));

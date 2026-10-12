@@ -126,7 +126,11 @@ public class SessionCookieJar implements CookieJar {
     public synchronized void saveFromResponse(HttpUrl url, List<Cookie> cookies) {
         for (Cookie cookie : cookies) {
             if (cookie.name() != null && !cookie.name().isEmpty()) {
-                cookieMap.put(cookie.name(), cookie.value());
+                if (cookie.expiresAt() <= System.currentTimeMillis()) {
+                    cookieMap.remove(cookie.name());
+                } else {
+                    cookieMap.put(cookie.name(), cookie.value());
+                }
             }
         }
     }
@@ -207,7 +211,9 @@ public class SessionCookieJar implements CookieJar {
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
-                .followRedirects(true)
+                // Imported Cookie headers have no domain metadata; never replay them on redirects.
+                .followRedirects(false)
+                .followSslRedirects(false)
                 .build();
     }
 }

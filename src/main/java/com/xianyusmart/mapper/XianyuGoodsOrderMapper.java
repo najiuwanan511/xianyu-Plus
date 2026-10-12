@@ -226,8 +226,19 @@ public interface XianyuGoodsOrderMapper {
     @Update("UPDATE xianyu_goods_order SET state = #{state}, content = #{content}, delivery_status = CASE WHEN #{state} = 1 THEN 'COMPLETED' WHEN #{state} = -1 THEN 'FAILED' ELSE delivery_status END WHERE id = #{id}")
     int updateStateAndContent(@Param("id") Long id, @Param("state") Integer state, @Param("content") String content);
 
-    @Update("UPDATE xianyu_goods_order SET state = #{state}, content = #{content}, fail_reason = #{failReason}, delivery_status = CASE WHEN #{state} = 1 THEN 'COMPLETED' WHEN #{state} = -1 THEN 'FAILED' ELSE delivery_status END WHERE id = #{id}")
+    // A leased worker records its result first; only the scheduler releases/completes the task.
+    @Update("UPDATE xianyu_goods_order SET state = #{state}, content = #{content}, fail_reason = #{failReason}, " +
+            "delivery_status = CASE WHEN delivery_status = 'PROCESSING' THEN delivery_status " +
+            "WHEN #{state} = 1 THEN 'COMPLETED' WHEN #{state} = -1 THEN 'FAILED' ELSE delivery_status END " +
+            "WHERE id = #{id} AND (delivery_status IS NULL OR delivery_status <> 'PROCESSING' OR lease_expire_time > NOW(3))")
     int updateStateContentAndFailReason(@Param("id") Long id, @Param("state") Integer state, @Param("content") String content, @Param("failReason") String failReason);
+
+    @Update("UPDATE xianyu_goods_order SET state = #{state}, content = #{content}, fail_reason = #{failReason} " +
+            "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} " +
+            "AND lease_expire_time > NOW(3)")
+    int updateLeasedDeliveryResult(@Param("id") Long id, @Param("workerId") String workerId,
+                                  @Param("state") Integer state, @Param("content") String content,
+                                  @Param("failReason") String failReason);
 
     /** A pickup transaction must never remain eligible for a logistics task. */
     @Update("UPDATE xianyu_goods_order SET state = 0, confirm_state = 0, fail_reason = NULL, " +
@@ -280,9 +291,21 @@ public interface XianyuGoodsOrderMapper {
             "AND last_error_code = 'EXTERNAL_SEND_STARTED'")
     int markExpiredExternalAttemptsForReview();
 
+    /** Stop queued tasks once a platform status proves they must not be sent. */
+    @Update("UPDATE xianyu_goods_order SET delivery_status = 'SKIPPED', next_retry_time = NULL, " +
+            "lease_owner = NULL, lease_expire_time = NULL, last_error_code = 'TRADE_STATUS_BLOCKED', " +
+            "last_error_message = '订单非待发货状态，自动发货已停止' " +
+            "WHERE (delivery_status IN ('PENDING', 'RETRY_WAIT') " +
+            "OR (delivery_status = 'PROCESSING' AND lease_expire_time < NOW(3) " +
+            "AND COALESCE(last_error_code, '') <> 'EXTERNAL_SEND_STARTED')) " +
+            "AND trade_status IN ('PENDING_PAYMENT','REFUNDING','REFUNDED','CLOSED','SHIPPED','COMPLETED')")
+    int skipNonDeliverableTasks();
+
     @Select("SELECT * FROM xianyu_goods_order WHERE " +
             "((delivery_status IN ('PENDING', 'RETRY_WAIT') AND (next_retry_time IS NULL OR next_retry_time <= NOW(3))) " +
             "OR (delivery_status = 'PROCESSING' AND lease_expire_time < NOW(3))) " +
+            "AND EXISTS (SELECT 1 FROM xianyu_account a WHERE a.id = xianyu_goods_order.xianyu_account_id AND a.status = 1) " +
+            "AND COALESCE(trade_status, '') NOT IN ('PENDING_PAYMENT','REFUNDING','REFUNDED','CLOSED','SHIPPED','COMPLETED') " +
             "ORDER BY create_time ASC LIMIT #{limit} FOR UPDATE")
     List<XianyuGoodsOrder> lockDueTasks(@Param("limit") int limit);
 
@@ -322,23 +345,34 @@ public interface XianyuGoodsOrderMapper {
     int updateZeroProgress(@Param("id") Long id, @Param("status") String status,
                            @Param("errorCode") String errorCode, @Param("message") String message);
     @Update("UPDATE xianyu_goods_order SET state = 0, delivery_status = 'RETRY_WAIT', " +
+            "attempt_count = GREATEST(COALESCE(attempt_count, 1) - 1, 0), " +
             "next_retry_time = DATE_ADD(NOW(3), INTERVAL 5 MINUTE), lease_owner = NULL, lease_expire_time = NULL, " +
             "last_error_code = 'BUYER_VERIFICATION_PENDING', last_error_message = #{reason}, fail_reason = #{reason} " +
-            "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} AND lease_expire_time > NOW(3)")
+            "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} AND lease_expire_time > NOW(3) " +
+            "AND COALESCE(last_error_code, '') <> 'EXTERNAL_SEND_STARTED'")
     int deferBuyerVerificationTask(@Param("id") Long id, @Param("workerId") String workerId,
                                    @Param("reason") String reason);
 
-    /**
-     * 挂起买家身份核验任务：凭证无法自动恢复时停止 5 分钟空转重试，
-     * 调度器不再领取（delivery_status 不在 PENDING/RETRY_WAIT 范围内），
-     * 等待人工重新扫码登录后手动重试。
-     */
-    @Update("UPDATE xianyu_goods_order SET delivery_status = 'SUSPENDED', state = 0, " +
-            "next_retry_time = NULL, lease_owner = NULL, lease_expire_time = NULL, " +
-            "last_error_code = 'TOKEN_REFRESH_FAILED', last_error_message = #{reason}, fail_reason = #{reason} " +
-            "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} AND lease_expire_time > NOW(3)")
-    int suspendBuyerVerificationTask(@Param("id") Long id, @Param("workerId") String workerId,
-                                     @Param("reason") String reason);
+    @Update("UPDATE xianyu_goods_order SET state = 0, delivery_status = 'RETRY_WAIT', " +
+            "attempt_count = GREATEST(COALESCE(attempt_count, 1) - 1, 0), " +
+            "next_retry_time = DATE_ADD(NOW(3), INTERVAL 30 MINUTE), lease_owner = NULL, lease_expire_time = NULL, " +
+            "last_error_code = 'BUYER_VERIFICATION_PENDING', last_error_message = #{reason}, fail_reason = #{reason} " +
+            "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} AND lease_expire_time > NOW(3) " +
+            "AND COALESCE(last_error_code, '') <> 'EXTERNAL_SEND_STARTED'")
+    int deferBuyerVerificationRecoveryTask(@Param("id") Long id, @Param("workerId") String workerId,
+                                          @Param("reason") String reason);
+
+    /** Only pre-send verification failures may resume after credentials are supplied. */
+    @Update("UPDATE xianyu_goods_order SET delivery_status = 'PENDING', next_retry_time = NOW(3), " +
+            "lease_owner = NULL, lease_expire_time = NULL, last_error_code = NULL, " +
+            "last_error_message = NULL, fail_reason = NULL " +
+            "WHERE xianyu_account_id = #{accountId} AND state = 0 " +
+            "AND COALESCE(delivered_quantity, 0) = 0 AND COALESCE(confirm_state, 0) = 0 " +
+            "AND COALESCE(content, '') = '' AND COALESCE(delivery_channel, '') <> 'PICKUP' " +
+            "AND COALESCE(trade_status, '') IN ('', 'PENDING_SHIPMENT') " +
+            "AND ((delivery_status = 'RETRY_WAIT' AND last_error_code = 'BUYER_VERIFICATION_PENDING') " +
+            "OR (delivery_status = 'SUSPENDED' AND last_error_code = 'TOKEN_REFRESH_FAILED'))")
+    int resumeBuyerVerificationTasks(@Param("accountId") Long accountId);
 
     @Update("UPDATE xianyu_goods_order SET delivery_status = 'REVIEW_REQUIRED', next_retry_time = NULL, " +
             "lease_owner = NULL, lease_expire_time = NULL, last_error_code = 'DELIVERY_UNCERTAIN', last_error_message = #{errorMessage} " +
@@ -356,7 +390,8 @@ public interface XianyuGoodsOrderMapper {
     @Update("UPDATE xianyu_goods_order SET last_error_code = 'EXTERNAL_SEND_STARTED', " +
             "last_error_message = '外部发送已开始，进程中断时禁止自动重试' " +
             "WHERE id = #{id} AND delivery_status = 'PROCESSING' AND lease_owner = #{workerId} " +
-            "AND lease_expire_time > NOW(3)")
+            "AND lease_expire_time > NOW(3) " +
+            "AND COALESCE(trade_status, '') NOT IN ('PENDING_PAYMENT','REFUNDING','REFUNDED','CLOSED','SHIPPED','COMPLETED')")
     int markExternalAttemptStarted(@Param("id") Long id, @Param("workerId") String workerId);
 
     @Update("UPDATE xianyu_goods_order SET delivery_status = 'PENDING', next_retry_time = NOW(3), " +

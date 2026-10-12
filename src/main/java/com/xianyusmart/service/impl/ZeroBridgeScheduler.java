@@ -4,6 +4,7 @@ import com.xianyusmart.entity.XianyuZeroBridgeOrder;
 import com.xianyusmart.mapper.XianyuZeroBridgeOrderMapper;
 import com.xianyusmart.mapper.XianyuGoodsAutoDeliveryConfigMapper;
 import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
+import com.xianyusmart.service.OnlineUpdateMaintenanceService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -17,22 +18,27 @@ public class ZeroBridgeScheduler {
     private final ZeroBridgeServiceImpl zeroBridgeService;
     private final XianyuGoodsAutoDeliveryConfigMapper deliveryConfigMapper;
     private final XianyuGoodsOrderMapper orderMapper;
+    private final OnlineUpdateMaintenanceService onlineUpdateMaintenanceService;
 
     public ZeroBridgeScheduler(XianyuZeroBridgeOrderMapper bridgeMapper,
                                ZeroBridgeServiceImpl zeroBridgeService,
                                XianyuGoodsAutoDeliveryConfigMapper deliveryConfigMapper,
-                               XianyuGoodsOrderMapper orderMapper) {
+                               XianyuGoodsOrderMapper orderMapper,
+                               OnlineUpdateMaintenanceService onlineUpdateMaintenanceService) {
         this.bridgeMapper = bridgeMapper;
         this.zeroBridgeService = zeroBridgeService;
         this.deliveryConfigMapper = deliveryConfigMapper;
         this.orderMapper = orderMapper;
+        this.onlineUpdateMaintenanceService = onlineUpdateMaintenanceService;
     }
 
     @Scheduled(fixedDelay = 2000, initialDelay = 8000)
     public void submitDueOrders() {
+        if (onlineUpdateMaintenanceService.isActive()) return;
         if (!zeroBridgeService.isEnabled()) return;
         bridgeMapper.recoverInterruptedSubmissions();
         for (XianyuZeroBridgeOrder bridge : bridgeMapper.selectDueSubmissions(10)) {
+            if (onlineUpdateMaintenanceService.isActive()) return;
             if (bridgeMapper.claimSubmission(bridge.getId()) == 0) continue;
             bridge = bridgeMapper.selectById(bridge.getId());
             try {
@@ -53,8 +59,10 @@ public class ZeroBridgeScheduler {
 
     @Scheduled(fixedDelay = 2000, initialDelay = 10000)
     public void sendDueResults() {
+        if (onlineUpdateMaintenanceService.isActive()) return;
         bridgeMapper.recoverInterruptedReplies();
         for (XianyuZeroBridgeOrder bridge : bridgeMapper.selectDueReplies(10)) {
+            if (onlineUpdateMaintenanceService.isActive()) return;
             if (bridgeMapper.claimReply(bridge.getId()) == 0) continue;
             bridge = bridgeMapper.selectById(bridge.getId());
             try {

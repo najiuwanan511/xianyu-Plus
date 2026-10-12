@@ -16,6 +16,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SystemUpdateServiceTest {
 
+    @Test
+    void updateCountsActiveBridgeWork() {
+        var mapper = org.mockito.Mockito.mock(com.xianyusmart.mapper.XianyuZeroBridgeOrderMapper.class);
+        org.mockito.Mockito.when(mapper.countOnlineUpdateBlockingTasks()).thenReturn(2);
+        ReflectionTestUtils.setField(service, "zeroBridgeOrderMapper", mapper);
+        assertEquals(2, (Integer) ReflectionTestUtils.invokeMethod(service, "countOnlineUpdateBlockingTasks"));
+    }
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SystemUpdateService service = new SystemUpdateService(objectMapper);
 
@@ -55,6 +63,17 @@ class SystemUpdateServiceTest {
         assertFalse(status.isUpdateAvailable());
         assertEquals("当前已是 GitHub 最新版本", status.getMessage());
     }
+    @Test
+    void developmentVersionIsNotDescribedAsLatestOfficialRelease() {
+        SystemUpdateStatusRespDTO status = new SystemUpdateStatusRespDTO();
+        status.setCurrentVersion("2.3.22");
+        status.setLatestVersion("2.3.21");
+        service.applyReleaseVersionStatus(status);
+        assertFalse(status.isUpdateAvailable());
+        assertTrue(status.getMessage().contains("高于最新正式版本"));
+        assertFalse(status.getMessage().contains("当前已是最新正式版本"));
+    }
+
     @Test
     void releaseVersionOverridesOldImageCommitComparison() {
         SystemUpdateStatusRespDTO status = new SystemUpdateStatusRespDTO();

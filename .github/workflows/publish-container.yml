@@ -28,6 +28,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
 
+      - name: 校验发布版本与源码一致
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+        run: python3 deploy/validate-release-version.py "$RELEASE_TAG"
+
       - name: 配置 Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -52,6 +57,8 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: |
+            APP_GIT_SHA=${{ steps.image.outputs.revision }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
@@ -71,6 +78,11 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+
+      - name: 校验发布版本与源码一致
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+        run: python3 deploy/validate-release-version.py "$RELEASE_TAG"
 
       - name: 配置 Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -103,6 +115,7 @@ jobs:
         run: |
           python3 -m unittest discover -s deploy/tests -v
           bash -n update.sh
+          bash -n deploy/self-update/xianyu-plus-update-agent.sh
 
       - name: 生成正式版本附件
         id: artifact

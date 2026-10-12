@@ -132,7 +132,7 @@ public class OrderDetailFetcher {
             Mh5tkRefreshResult refreshResult = tokenRefreshService.refreshMh5tkTokenDetailed(accountId);
             if (refreshResult != Mh5tkRefreshResult.REFRESHED) {
                 // 熔断：没有拿到新 Token，继续用旧 Token 重试只会重复失败。
-                // 直接返回失败结果，让上层挂起任务等待人工处理，而不是空转重试。
+                // 返回本次结果，由任务层退避等待凭证或平台接口恢复。
                 log.warn("【账号{}】订单详情_m_h5_tk刷新未生效(result={})，不再用旧Token重试: orderId={}",
                         accountId, refreshResult, orderId);
                 return result;

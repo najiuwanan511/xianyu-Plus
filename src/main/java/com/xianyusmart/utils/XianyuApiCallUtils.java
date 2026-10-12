@@ -19,6 +19,9 @@ import java.util.Map;
 @Slf4j
 @Component
 public class XianyuApiCallUtils {
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.xianyusmart.service.impl.CredentialUpdateCoordinator credentialUpdateCoordinator;
+
     
     @Autowired
     private com.xianyusmart.service.CookieRefreshService cookieRefreshService;
@@ -206,23 +209,24 @@ public class XianyuApiCallUtils {
      * @param setCookieHeaders 响应中的Set-Cookie列表
      */
     private String updateCookiesFromResponse(Long accountId, String currentCookieStr, List<String> setCookieHeaders) {
-        try {
-            // 合并Cookie
-            String newCookieStr = mergeCookies(currentCookieStr, setCookieHeaders);
-
-            // 清理重复Cookie
-            newCookieStr = cookieRefreshService.clearDuplicateCookies(newCookieStr);
-
-            // 更新数据库中的Cookie
-            if (!newCookieStr.equals(currentCookieStr)) {
-                accountService.updateCookie(accountId, newCookieStr);
-                log.info("【账号{}】Cookie已从响应Set-Cookie更新到数据库", accountId);
+        return credentialUpdateCoordinator.withAccountLock(accountId, () -> {
+            try {
+                String latest = accountService.getCookieByAccountId(accountId);
+                if (latest == null || latest.isBlank()) return currentCookieStr;
+                Map<String, String> sent = XianyuSignUtils.parseCookies(currentCookieStr);
+                Map<String, String> stored = XianyuSignUtils.parseCookies(latest);
+                // A response to old credentials must not overwrite a concurrent login/token refresh.
+                for (String key : List.of("_m_h5_tk", "_m_h5_tk_enc", "cookie2", "unb")) {
+                    if (!java.util.Objects.equals(sent.get(key), stored.get(key))) return latest;
+                }
+                String merged = cookieRefreshService.clearDuplicateCookies(mergeCookies(latest, setCookieHeaders));
+                if (!merged.equals(latest) && !accountService.updateCookie(accountId, merged)) return latest;
+                return merged;
+            } catch (Exception e) {
+                log.warn("【账号{}】响应Cookie未能保存，保留原凭证", accountId);
+                return currentCookieStr;
             }
-            return newCookieStr;
-        } catch (Exception e) {
-            log.error("【账号{}】处理响应Set-Cookie失败", accountId, e);
-            return currentCookieStr;
-        }
+        });
     }
 
     /**

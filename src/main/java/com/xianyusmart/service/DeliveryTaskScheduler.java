@@ -177,7 +177,6 @@ public class DeliveryTaskScheduler {
             return;
         }
         AtomicBoolean leaseActive = new AtomicBoolean(true);
-        AtomicBoolean externalAttemptStarted = new AtomicBoolean(false);
         long renewalSeconds = Math.max(10, leaseSeconds / 2L);
         ScheduledFuture<?> renewal = taskScheduler.scheduleAtFixedRate(
                 () -> {
@@ -196,10 +195,8 @@ public class DeliveryTaskScheduler {
                     && deliveryTaskService.isLeaseActive(task.getId(), workerId);
             java.util.function.BooleanSupplier externalAttemptAllowed = () -> {
                 if (!executionAllowed.getAsBoolean()) return false;
-                if (externalAttemptStarted.compareAndSet(false, true)) {
-                    return deliveryTaskService.beginExternalAttempt(task.getId(), workerId);
-                }
-                return executionAllowed.getAsBoolean();
+                // Recheck the persisted trade state immediately before every external send.
+                return deliveryTaskService.beginExternalAttempt(task.getId(), workerId);
             };
 
             autoDeliveryService.executeDelivery(

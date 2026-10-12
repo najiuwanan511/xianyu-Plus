@@ -712,9 +712,8 @@ public class WebSocketController {
             // 刷新_m_h5_tk token
             log.info("【账号{}】开始刷新_m_h5_tk token...", reqDTO.getXianyuAccountId());
             Mh5tkRefreshResult mh5tkResult = tokenRefreshService.refreshMh5tkTokenDetailed(reqDTO.getXianyuAccountId());
-            // 手动刷新场景下"未变化"说明 Token 仍然有效，视为成功；
-            // 业务恢复路径（OrderDetailFetcher）中 UNCHANGED 会被当作"未恢复"处理
-            boolean mh5tkSuccess = mh5tkResult != Mh5tkRefreshResult.FAILED;
+            // 未取得新 Token 不能证明旧 Token 仍然有效。
+            boolean mh5tkSuccess = mh5tkResult == Mh5tkRefreshResult.REFRESHED;
             respDTO.setMh5tkRefreshed(mh5tkSuccess);
             
             // 刷新WebSocket token
@@ -723,7 +722,7 @@ public class WebSocketController {
             respDTO.setWsTokenRefreshed(wsTokenSuccess);
             
             if (mh5tkSuccess && wsTokenSuccess) {
-                String mh5tkNote = mh5tkResult == Mh5tkRefreshResult.UNCHANGED ? "（_m_h5_tk 未变化，仍然有效）" : "";
+                String mh5tkNote = "";
                 respDTO.setMessage("✅ 所有Token刷新成功" + mh5tkNote);
                 log.info("【账号{}】✅ 所有Token刷新成功{}", reqDTO.getXianyuAccountId(), mh5tkNote);
                 
@@ -738,7 +737,8 @@ public class WebSocketController {
                 
                 return ResultObject.success(respDTO);
             } else if (mh5tkSuccess || wsTokenSuccess) {
-                respDTO.setMessage("⚠️ 部分Token刷新成功");
+                respDTO.setMessage("⚠️ 部分Token刷新成功" + (mh5tkResult == Mh5tkRefreshResult.UNCHANGED
+                        ? "；未取得新的签名Token，无法确认旧Token是否有效" : ""));
                 log.warn("【账号{}】⚠️ 部分Token刷新成功: mh5tkSuccess={}, wsTokenSuccess={}",
                         reqDTO.getXianyuAccountId(), mh5tkSuccess, wsTokenSuccess);
                 

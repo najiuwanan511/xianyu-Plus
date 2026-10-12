@@ -7,6 +7,7 @@ import com.xianyusmart.controller.dto.SystemUpdateStatusRespDTO;
 import com.xianyusmart.mapper.OrderAutomationRecordMapper;
 import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
 import com.xianyusmart.mapper.XianyuGoodsAutoReplyRecordMapper;
+import com.xianyusmart.mapper.XianyuZeroBridgeOrderMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -76,6 +77,9 @@ public class SystemUpdateService {
 
     @Autowired(required = false)
     private XianyuGoodsAutoReplyRecordMapper autoReplyRecordMapper;
+
+    @Autowired(required = false)
+    private XianyuZeroBridgeOrderMapper zeroBridgeOrderMapper;
 
     private volatile SystemUpdateStatusRespDTO cachedStatus;
     private volatile Instant cachedAt;
@@ -214,6 +218,7 @@ public class SystemUpdateService {
             int count = orderMapper == null ? 0 : orderMapper.countOnlineUpdateBlockingTasks();
             count += automationRecordMapper == null ? 0 : automationRecordMapper.countOnlineUpdateBlockingActions();
             count += autoReplyRecordMapper == null ? 0 : autoReplyRecordMapper.countOnlineUpdateBlockingReplies();
+            count += zeroBridgeOrderMapper == null ? 0 : zeroBridgeOrderMapper.countOnlineUpdateBlockingTasks();
             return count;
         } catch (Exception exception) {
             log.warn("在线更新前检查业务任务失败", exception);
@@ -355,9 +360,9 @@ public class SystemUpdateService {
 
             applyCompareStatus(status, compareStatus, root);
             applyReleaseVersionStatus(status);
-            if ((status.getLatestVersion() == null || status.getLatestVersion().isBlank())
-                    && "identical".equals(compareStatus)) {
-                status.setLatestVersion(status.getCurrentVersion());
+            if (!releaseResolved) {
+                status.setUpdateAvailable(false);
+                status.setMessage("已检查源码提交，但暂时无法读取正式版本，请稍后重试");
             }
             fetchReleaseHighlights(normalizedRepository, status);
             applyBundledReleaseNotes(status);
@@ -401,7 +406,9 @@ public class SystemUpdateService {
         status.setUpdateAvailable(comparison > 0);
         status.setMessage(comparison > 0
                 ? "发现正式版本 V" + latest + "，可以在线更新"
-                : "当前已是最新正式版本 V" + current);
+                : comparison < 0
+                    ? "当前运行版本 V" + current + " 高于最新正式版本 V" + latest + "，暂无可用的正式版更新"
+                    : "当前已是最新正式版本 V" + current);
     }
     private boolean fetchLatestVersion(String normalizedRepository, SystemUpdateStatusRespDTO status) {
         try {

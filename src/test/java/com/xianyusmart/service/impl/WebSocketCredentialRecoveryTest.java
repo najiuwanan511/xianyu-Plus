@@ -90,6 +90,8 @@ class WebSocketCredentialRecoveryTest {
         when(cookieMapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(cookie);
         ReflectionTestUtils.setField(service, "accountMapper", accountMapper);
         ReflectionTestUtils.setField(service, "cookieMapper", cookieMapper);
+        var orders = mock(com.xianyusmart.mapper.XianyuGoodsOrderMapper.class);
+        ReflectionTestUtils.setField(service, "orderMapper", orders);
 
         service.saveAccountAndCookie("account-7", "123456",
                 "unb=123456; _m_h5_tk=fresh_1", "fresh_1");
@@ -98,6 +100,7 @@ class WebSocketCredentialRecoveryTest {
         assertEquals("我的主账号", account.getAccountNote());
         verify(accountMapper).updateById(account);
         verify(cookieMapper).updateById(cookie);
+        verify(orders).resumeBuyerVerificationTasks(7L);
     }
 
     private static XianyuAccount account(Long id, int status) {

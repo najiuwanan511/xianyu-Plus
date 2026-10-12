@@ -51,6 +51,12 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     public DeliveryAttemptResult consignDummyDelivery(Long accountId, String orderId, String tradeText, List<String> imageUrls) {
+        if (tradeText != null && tradeText.length() > 200) {
+            return DeliveryAttemptResult.rejected("发货内容超过虚拟发货接口200字符限制，请缩短内容或恢复聊天连接后重试");
+        }
+        if (imageUrls != null && imageUrls.size() > 3) {
+            return DeliveryAttemptResult.rejected("发货图片超过虚拟发货接口3张限制，请减少图片或恢复聊天连接后重试");
+        }
         try {
             log.info("【账号{}】开始调用闲鱼新发货API(虚拟发货): orderId={}", accountId, orderId);
 
@@ -61,18 +67,10 @@ public class OrderServiceImpl implements OrderService {
             }
 
             String limitedText = tradeText;
-            if (limitedText != null && limitedText.length() > 200) {
-                limitedText = limitedText.substring(0, 200);
-                log.info("【账号{}】发货内容超过200字，已截断", accountId);
-            }
 
             List<String> limitedImages = new ArrayList<>();
             if (imageUrls != null && !imageUrls.isEmpty()) {
-                int limit = Math.min(imageUrls.size(), 3);
-                limitedImages = imageUrls.subList(0, limit);
-                if (imageUrls.size() > 3) {
-                    log.info("【账号{}】发货图片超过3张，已截断", accountId);
-                }
+                limitedImages = imageUrls;
             }
 
             String picListJson;

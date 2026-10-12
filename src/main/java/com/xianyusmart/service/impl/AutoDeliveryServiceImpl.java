@@ -591,6 +591,14 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                                 String orderId, String buyerUserName, boolean needHumanLikeDelay,
                                 java.util.function.BooleanSupplier executionAllowed,
                                 java.util.function.BooleanSupplier externalAttemptAllowed) {
+        String expectedLeaseOwner = null;
+        java.util.concurrent.atomic.AtomicBoolean externalSendStarted = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.function.BooleanSupplier originalExternalGuard = externalAttemptAllowed;
+        externalAttemptAllowed = () -> {
+            boolean allowed = originalExternalGuard.getAsBoolean();
+            if (allowed) externalSendStarted.set(true);
+            return allowed;
+        };
         boolean cardDelivery = false;
         boolean cardDeliveryAttempted = false;
         boolean anySuccess = false;
@@ -600,14 +608,20 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             log.info("【账号{}】开始执行自动发货: recordId={}, xyGoodsId={}, orderId={}", accountId, recordId, xyGoodsId, orderId);
 
             XianyuGoodsOrder currentOrder = orderMapper.selectById(recordId);
+            expectedLeaseOwner = currentOrder == null ? null : currentOrder.getLeaseOwner();
             if (currentOrder == null) {
-                updateRecordState(recordId, -1, null, "Order record was not found");
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, "Order record was not found");
+                return;
+            }
+            if (java.util.Set.of("PENDING_PAYMENT", "REFUNDING", "REFUNDED", "CLOSED", "SHIPPED", "COMPLETED")
+                    .contains(currentOrder.getTradeStatus() == null ? "" : currentOrder.getTradeStatus())) {
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, "订单非待发货状态，自动发货已停止");
                 return;
             }
             String blacklistReason = currentOrder == null ? null
                     : blacklistService.blockedMessage(accountId, currentOrder.getBuyerUserId());
             if (blacklistReason != null) {
-                updateRecordState(recordId, -1, null, blacklistReason);
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, blacklistReason);
                 log.warn("【账号{}】黑名单买家禁止发货: recordId={}, buyerUserId={}",
                         accountId, recordId, currentOrder.getBuyerUserId());
                 return;
@@ -616,7 +630,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             XianyuGoodsConfig goodsConfig = goodsConfigMapper.selectByAccountAndGoodsId(accountId, xyGoodsId);
             if (goodsConfig == null || goodsConfig.getXianyuAutoDeliveryOn() == null || goodsConfig.getXianyuAutoDeliveryOn() != 1) {
                 log.warn("【账号{}】商品未开启自动发货: xyGoodsId={}", accountId, xyGoodsId);
-                updateRecordState(recordId, -1, null, "商品未开启自动发货");
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, "商品未开启自动发货");
                 return;
             }
 
@@ -625,7 +639,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 log.warn("【账号{}】订单买家身份暂时无法核验，延迟重试: orderId={}", accountId, orderId);
                 String failReason = BUYER_VERIFICATION_PENDING_PREFIX
                         + "订单详情查询失败，可能是 Cookie 失效或平台接口暂时异常；卡密未发送，将自动重试";
-                updateRecordState(recordId, 0, null, failReason);
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, 0, null, failReason);
                 return;
             }
             String orderSkuId = firstNonBlank(orderDetail == null ? null : orderDetail.skuId, currentOrder.getSkuId());
@@ -646,7 +660,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             } catch (IllegalStateException e) {
                 log.warn("【账号{}】商品规格发货配置校验失败: xyGoodsId={}, skuId={}, reason={}",
                         accountId, xyGoodsId, orderSkuId, e.getMessage());
-                updateRecordState(recordId, -1, null, e.getMessage());
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, e.getMessage());
                 emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, e.getMessage());
                 return;
             }
@@ -658,7 +672,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             String toId = requireExternalBuyerRecipientId(accountId, verifiedBuyerId);
             blacklistReason = blacklistService.blockedMessage(accountId, verifiedBuyerId);
             if (blacklistReason != null) {
-                updateRecordState(recordId, -1, null, blacklistReason);
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, blacklistReason);
                 log.warn("【账号{}】详情补全后命中黑名单并停止发货: recordId={}, buyerUserId={}",
                         accountId, recordId, verifiedBuyerId);
                 return;
@@ -702,7 +716,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 if (content == null) {
                     String failMsg = deliveryMode == 1 ? "未配置发货内容" : (deliveryMode == 2 ? "卡密库存不足，无可用卡密" : "未知的发货模式: " + deliveryMode);
                     log.warn("【账号{}】发货内容解析失败: {}", accountId, failMsg);
-                    updateRecordState(recordId, -1, null, failMsg);
+                    updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, failMsg);
                     emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failMsg);
                     return;
                 }
@@ -710,7 +724,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 if (cardDelivery && content.length() > 200) {
                     kamiConfigService.releaseReservation(orderId);
                     String failMsg = "卡密内容超过虚拟发货接口200字符限制，请减少单次购买数量或缩短模板";
-                    updateRecordState(recordId, -1, null, failMsg);
+                    updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, failMsg);
                     emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failMsg);
                     return;
                 }
@@ -728,7 +742,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 String finalBlacklistReason = blacklistService.blockedMessage(accountId, currentOrder.getBuyerUserId());
                 if (finalBlacklistReason != null) {
                     if (cardDelivery) kamiConfigService.releaseReservation(orderId);
-                    updateRecordState(recordId, -1, null, finalBlacklistReason);
+                    updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, finalBlacklistReason);
                     return;
                 }
 
@@ -759,7 +773,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                         kamiConfigService.markReservationReviewRequired(orderId);
                     }
                     String failReason = PARTIAL_DELIVERY_REVIEW_PREFIX + deliveryResult.message();
-                    updateRecordState(recordId, -1, null, failReason);
+                    updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, failReason);
                     emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
                     return;
                 } else {
@@ -768,7 +782,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                     }
                     String failReason = "虚拟发货API被平台拒绝: " + deliveryResult.message();
                     log.error("【账号{}】❌ {}: recordId={}", accountId, failReason, recordId);
-                    updateRecordState(recordId, -1, null, failReason);
+                    updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, failReason);
                     emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
                     return;
                 }
@@ -784,7 +798,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 if (content == null) {
                     String failMsg = deliveryMode == 1 ? "未配置发货内容" : (deliveryMode == 2 ? "卡密库存不足，无可用卡密" : "未知的发货模式: " + deliveryMode);
                     log.warn("【账号{}】发货内容解析失败: {}", accountId, failMsg);
-                    updateRecordState(recordId, -1, null, failMsg);
+                    updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, null, failMsg);
                     emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failMsg);
                     return;
                 }
@@ -792,14 +806,15 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 ensureExecutionAllowed(executionAllowed);
                 cardDeliveryAttempted = cardDelivery;
                 ImageDeliveryResult imageResult = sendDeliveryImages(
-                        accountId, xyGoodsId, cid, toId, deliveryConfig, needHumanLikeDelay);
+                        accountId, xyGoodsId, cid, toId, deliveryConfig, needHumanLikeDelay,
+                        executionAllowed, externalAttemptAllowed);
                 if (!imageResult.success()) {
                     if (cardDelivery) {
                         kamiConfigService.releaseReservation(orderId);
                     }
                     String failReason = PARTIAL_DELIVERY_REVIEW_PREFIX + "发货图片仅成功 "
                             + imageResult.sent() + "/" + imageResult.configured() + "，文字内容未发送，请人工核对后处理。";
-                    updateRecordState(recordId, -1, allContent.toString(), failReason);
+                    updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, allContent.toString(), failReason);
                     emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
                     return;
                 }
@@ -832,9 +847,8 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                             kamiConfigService.markReservationReviewRequired(orderId);
                         }
                         String failReason = finalBlacklistReason != null ? finalBlacklistReason
-                                : (sentInThisDelivery == 0 && !anySuccess ? "消息发送失败"
-                                : PARTIAL_DELIVERY_REVIEW_PREFIX + "部分发货消息已发送，剩余内容失败，请人工核对后处理。");
-                        updateRecordState(recordId, -1, allContent.toString(), failReason);
+                                : PARTIAL_DELIVERY_REVIEW_PREFIX + "消息发送未取得平台确认，请核对买家消息后处理。";
+                        updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, allContent.toString(), failReason);
                         if (finalBlacklistReason == null) {
                             emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
                         }
@@ -861,7 +875,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
 
             ensureExecutionAllowed(executionAllowed);
             if (anySuccess) {
-                updateRecordState(recordId, 1, allContent.toString(), null);
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, 1, allContent.toString(), null);
                 notifyNewOrderAfterDelivery(accountId, recordId, allContent.toString());
 
                 XianyuGoodsAutoDeliveryConfig baseConfig = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdNoSku(accountId, xyGoodsId);
@@ -878,8 +892,8 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 if (anySuccess || cardDeliveryAttempted) kamiConfigService.markReservationReviewRequired(orderId);
                 else kamiConfigService.releaseReservation(orderId);
             }
-            if (anySuccess) {
-                updateRecordState(recordId, -1, allContent.toString(),
+            if (anySuccess || externalSendStarted.get()) {
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, allContent.toString(),
                         PARTIAL_DELIVERY_REVIEW_PREFIX + "发货任务租约已失效，发送结果需要人工核对。");
             }
             log.warn("【账号{}】发货任务租约已失效，旧任务已停止: recordId={}", accountId, recordId);
@@ -893,15 +907,15 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 }
             }
             log.error("【账号{}】执行自动发货异常: recordId={}, xyGoodsId={}", accountId, recordId, xyGoodsId, e);
-            if (anySuccess) {
-                updateRecordState(recordId, -1, allContent.toString(),
+            if (anySuccess || externalSendStarted.get()) {
+                updateDeliveryRecordState(recordId, expectedLeaseOwner, -1, allContent.toString(),
                         PARTIAL_DELIVERY_REVIEW_PREFIX + "外部消息发送后本地处理异常，请人工核对卡密与买家消息。" );
                 return;
             }
             String errorMessage = e.getMessage() == null ? "未知异常" : e.getMessage();
             boolean verificationPending = errorMessage.startsWith(BUYER_VERIFICATION_PENDING_PREFIX);
             String failReason = verificationPending ? errorMessage : "发货异常: " + errorMessage;
-            updateRecordState(recordId, verificationPending ? 0 : -1, null, failReason);
+            updateDeliveryRecordState(recordId, expectedLeaseOwner, verificationPending ? 0 : -1, null, failReason);
             if (!verificationPending) {
                 emailNotifyService.sendAutoDeliveryFailEmail(null, xyGoodsId, orderId, failReason);
             }
@@ -934,6 +948,15 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
     private ImageDeliveryResult sendDeliveryImages(Long accountId, String xyGoodsId, String cid, String toId,
                                                    XianyuGoodsAutoDeliveryConfig deliveryConfig,
                                                    boolean needHumanLikeDelay) {
+        return sendDeliveryImages(accountId, xyGoodsId, cid, toId, deliveryConfig,
+                needHumanLikeDelay, () -> true, () -> true);
+    }
+
+    private ImageDeliveryResult sendDeliveryImages(Long accountId, String xyGoodsId, String cid, String toId,
+                                                   XianyuGoodsAutoDeliveryConfig deliveryConfig,
+                                                   boolean needHumanLikeDelay,
+                                                   java.util.function.BooleanSupplier executionAllowed,
+                                                   java.util.function.BooleanSupplier externalAttemptAllowed) {
         String imageUrlStr = deliveryConfig.getAutoDeliveryImageUrl();
         if (imageUrlStr == null || imageUrlStr.trim().isEmpty()) {
             return new ImageDeliveryResult(0, 0, 0);
@@ -960,6 +983,8 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                     }
                 }
                 ImageDimensionService.ImageDimensions dimensions = imageDimensionService.resolve(url);
+                ensureExecutionAllowed(executionAllowed);
+                ensureExternalAttemptAllowed(externalAttemptAllowed);
                 boolean imgSuccess = webSocketService.sendImageMessage(
                         accountId, cid, toId, url, dimensions.width(), dimensions.height());
                 if (imgSuccess) {
@@ -970,6 +995,8 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                     failed++;
                     log.warn("【账号{}】自动发货图片[{}/{}]发送失败: xyGoodsId={}", accountId, i + 1, imageUrls.length, xyGoodsId);
                 }
+            } catch (DeliveryLeaseLostException leaseLost) {
+                throw leaseLost;
             } catch (Exception e) {
                 failed++;
                 log.error("【账号{}】自动发货图片[{}/{}]发送异常: xyGoodsId={}", accountId, i + 1, imageUrls.length, xyGoodsId, e);
@@ -1052,6 +1079,15 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
         }
         int queued = orderMapper.enqueueConfirmShipment(accountId, orderId);
         log.info("【账号{}】自动确认发货已进入持久化队列: orderId={}, queued={}", accountId, orderId, queued);
+    }
+
+    private void updateDeliveryRecordState(Long recordId, String leaseOwner, Integer state,
+                                           String content, String failReason) {
+        if (leaseOwner == null) {
+            updateRecordState(recordId, state, content, failReason);
+        } else if (orderMapper.updateLeasedDeliveryResult(recordId, leaseOwner, state, content, failReason) != 1) {
+            throw new DeliveryLeaseLostException();
+        }
     }
 
     private void updateRecordState(Long recordId, Integer state, String content, String failReason) {

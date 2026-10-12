@@ -87,7 +87,7 @@ const updateSummary = computed(() => {
   const current = displayVersion(updateStatus.value.currentVersion)
   const latest = displayVersion(updateStatus.value.latestVersion)
   if (updateStatus.value.currentVersion && updateStatus.value.latestVersion) {
-    return `当前 ${current} · 最新 ${latest}${updateStatus.value.updateAvailable ? ' · 可更新' : ''}`
+    return `当前 ${current} · 正式版 ${latest}${updateStatus.value.updateAvailable ? ' · 可更新' : ''}`
   }
   if (updateStatus.value.currentVersion) return `当前 ${current} · GitHub 版本暂未获取`
   return updateStatus.value.message
@@ -208,7 +208,9 @@ const loadUpdateStatus = async (forceRefresh = false) => {
               updateHighlights: parseReleaseHighlights(release.body),
               message: updateAvailable
                 ? `发现正式版本 V${latestVersion}（由当前浏览器检测）`
-                : `当前已是最新正式版本 V${normalizeVersion(updateStatus.value.currentVersion)}`
+                : compareVersions(latestVersion, updateStatus.value.currentVersion) < 0
+                  ? `当前运行版本高于最新正式版本 V${latestVersion}，暂无可用的正式版更新`
+                  : `当前已是最新正式版本 V${normalizeVersion(updateStatus.value.currentVersion)}`
             }
           }
         } catch {

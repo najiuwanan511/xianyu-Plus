@@ -92,7 +92,7 @@ wait_for_app() {
 wait_for_business_idle() {
     local count
     for _ in $(seq 1 120); do
-        if ! count="$(compose exec -T mysql sh -c 'mysql -N -s -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e "SELECT (SELECT COUNT(*) FROM xianyu_goods_order WHERE delivery_status = '\''PROCESSING'\'' OR confirm_task_status = '\''PROCESSING'\'') + (SELECT COUNT(*) FROM xianyu_order_automation_record WHERE rate_status = 6) + (SELECT COUNT(*) FROM xianyu_goods_auto_reply_record WHERE state = 2);"' | tr -d '[:space:]')"; then
+        if ! count="$(compose exec -T mysql sh -c 'mysql -N -s -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e "SELECT (SELECT COUNT(*) FROM xianyu_goods_order WHERE delivery_status = '\''PROCESSING'\'' OR confirm_task_status = '\''PROCESSING'\'') + (SELECT COUNT(*) FROM xianyu_order_automation_record WHERE rate_status = 6) + (SELECT COUNT(*) FROM xianyu_goods_auto_reply_record WHERE state = 2) + (SELECT COUNT(*) FROM xianyu_zero_bridge_order WHERE status IN ('\''SUBMITTING'\'','\''REPLYING'\''));"' | tr -d '[:space:]')"; then
             return 1
         fi
         [[ "$count" =~ ^[0-9]+$ ]] || return 1
@@ -216,11 +216,13 @@ python3 - "$WORK_DIR/release.json" "$WORK_DIR/asset-meta" "$TARGET_VERSION" <<'P
 import json, re, sys
 from urllib.parse import urlparse
 release = json.load(open(sys.argv[1], encoding="utf-8"))
+if release.get("draft") or release.get("prerelease"): raise SystemExit("不允许安装草稿或预发布版本")
 version = release.get("tag_name", "").lstrip("vV")
 if version != sys.argv[3].lstrip("vV"): raise SystemExit("GitHub最新正式版本与请求版本不一致")
 assets = release.get("assets") or []
 jars = [a for a in assets if a.get("name", "").startswith("xianyu-plus-") and a.get("name", "").endswith(".jar")]
 if len(jars) != 1: raise SystemExit("正式版本缺少唯一JAR")
+if jars[0]["name"] != "xianyu-plus-" + version + ".jar": raise SystemExit("JAR文件名与正式版本不一致")
 size = jars[0].get("size")
 if not isinstance(size, int) or size <= 0: raise SystemExit("正式版本JAR大小无效")
 url = jars[0].get("browser_download_url", "")
@@ -243,6 +245,18 @@ EXPECTED_SHA="${ASSET[3]}"
 ACTUAL_SHA="$(sha256sum "$WORK_DIR/app.jar" | awk '{print $1}')"
 FAILURE_MESSAGE="更新文件完整性校验失败"
 [[ "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{64}$ && "${EXPECTED_SHA,,}" == "$ACTUAL_SHA" ]]
+
+# Validate the embedded build before stopping any business task or replacing the active JAR.
+FAILURE_MESSAGE="更新JAR内部版本与正式版本不一致"
+python3 - "$WORK_DIR/app.jar" "$TARGET_VERSION" <<'PY_VERSION'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as jar:
+    names = [name for name in ("META-INF/build-info.properties", "BOOT-INF/classes/META-INF/build-info.properties") if name in jar.namelist()]
+    if len(names) != 1: raise SystemExit("更新JAR缺少唯一构建信息")
+    properties = dict(line.split("=", 1) for line in jar.read(names[0]).decode("utf-8").splitlines() if "=" in line and not line.startswith("#"))
+    if properties.get("build.version", "").strip() != sys.argv[2].lstrip("vV"):
+        raise SystemExit("更新JAR内部版本与请求版本不一致")
+PY_VERSION
 
 status "DRAINING" 78 "更新文件已就绪，正在等待当前自动化任务安全结束" "$TOTAL_BYTES" "$TOTAL_BYTES"
 touch "$MAINTENANCE_FLAG"

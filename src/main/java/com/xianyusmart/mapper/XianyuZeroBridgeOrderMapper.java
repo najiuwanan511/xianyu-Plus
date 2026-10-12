@@ -9,6 +9,9 @@ import java.util.List;
 
 @Mapper
 public interface XianyuZeroBridgeOrderMapper extends BaseMapper<XianyuZeroBridgeOrder> {
+    @Select("SELECT COUNT(*) FROM xianyu_zero_bridge_order WHERE status IN ('SUBMITTING', 'REPLYING')")
+    int countOnlineUpdateBlockingTasks();
+
     @Select("SELECT * FROM xianyu_zero_bridge_order WHERE goods_order_id = #{goodsOrderId} LIMIT 1")
     XianyuZeroBridgeOrder selectByGoodsOrderId(@Param("goodsOrderId") Long goodsOrderId);
 

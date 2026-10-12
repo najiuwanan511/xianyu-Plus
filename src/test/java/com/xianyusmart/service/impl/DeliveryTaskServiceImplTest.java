@@ -81,13 +81,13 @@ class DeliveryTaskServiceImplTest {
     }
 
     @Test
-    void suspendsBuyerVerificationTaskAfterMaxConsecutiveDeferrals() {
+    void keepsRetryingWithBackoffAfterMaxConsecutiveDeferrals() {
         XianyuGoodsOrderMapper orderMapper = mock(XianyuGoodsOrderMapper.class);
         DeliveryTaskServiceImpl service = new DeliveryTaskServiceImpl(orderMapper);
         ReflectionTestUtils.setField(service, "maxVerificationDeferrals", 2);
         String reason = "BUYER_VERIFICATION_PENDING: recipient not verified";
         when(orderMapper.deferBuyerVerificationTask(eq(3L), eq("worker-a"), anyString())).thenReturn(1);
-        when(orderMapper.suspendBuyerVerificationTask(eq(3L), eq("worker-a"), anyString())).thenReturn(1);
+        when(orderMapper.deferBuyerVerificationRecoveryTask(eq(3L), eq("worker-a"), anyString())).thenReturn(1);
         XianyuGoodsOrder task = new XianyuGoodsOrder();
         task.setXianyuAccountId(7L);
         task.setOrderId("order-1");
@@ -96,8 +96,10 @@ class DeliveryTaskServiceImplTest {
         service.deferBuyerVerification(3L, "worker-a", reason);
         service.deferBuyerVerification(3L, "worker-a", reason);
 
-        // 第一次走 5 分钟延迟重试，第二次达到阈值后挂起，不再空转
+        service.deferBuyerVerification(3L, "worker-a", reason);
+
+        // 初次五分钟重试；达到阈值后改为三十分钟恢复检查，不永久挂起
         verify(orderMapper, times(1)).deferBuyerVerificationTask(eq(3L), eq("worker-a"), anyString());
-        verify(orderMapper, times(1)).suspendBuyerVerificationTask(eq(3L), eq("worker-a"), anyString());
+        verify(orderMapper, times(2)).deferBuyerVerificationRecoveryTask(eq(3L), eq("worker-a"), anyString());
     }
 }

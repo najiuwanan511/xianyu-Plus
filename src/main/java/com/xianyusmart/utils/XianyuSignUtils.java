@@ -24,7 +24,7 @@ public class XianyuSignUtils {
             return cookies;
         }
 
-        String[] cookieArray = cookiesStr.split("; ");
+        String[] cookieArray = cookiesStr.split(";\\s*");
         for (String cookie : cookieArray) {
             if (cookie.contains("=")) {
                 String[] parts = cookie.split("=", 2);

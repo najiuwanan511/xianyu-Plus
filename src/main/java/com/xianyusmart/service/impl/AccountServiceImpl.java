@@ -190,6 +190,7 @@ public class AccountServiceImpl implements AccountService {
                         cookie.getId(), mH5Tk != null ? "已保存" : "未提供");
             }
 
+            orderMapper.resumeBuyerVerificationTasks(accountId);
             log.info("保存账号和Cookie完成: accountId={}", accountId);
             return accountId;
 
@@ -325,6 +326,7 @@ public class AccountServiceImpl implements AccountService {
             if (cookie != null) {
                 // 更新现有Cookie
                 cookie.setCookieText(cookieText);
+                cookie.setMH5Tk(extractMH5TkFromCookie(cookieText));
                 cookie.setCookieStatus(1);
                 cookie.setExpireTime(getFutureTimeString(30));
                 cookie.setUpdatedTime(getCurrentTimeString());
@@ -334,6 +336,7 @@ public class AccountServiceImpl implements AccountService {
                 cookie = new XianyuCookie();
                 cookie.setXianyuAccountId(accountId);
                 cookie.setCookieText(cookieText);
+                cookie.setMH5Tk(extractMH5TkFromCookie(cookieText));
                 cookie.setCookieStatus(1);
                 cookie.setExpireTime(getFutureTimeString(30));
                 cookie.setCreatedTime(getCurrentTimeString());
@@ -617,6 +620,7 @@ public class AccountServiceImpl implements AccountService {
                 log.info("创建Cookie成功: accountId={}", accountId);
             }
 
+            orderMapper.resumeBuyerVerificationTasks(accountId);
             return true;
 
         } catch (Exception e) {

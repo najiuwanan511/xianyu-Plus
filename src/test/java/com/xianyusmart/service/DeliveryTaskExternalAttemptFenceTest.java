@@ -26,7 +26,7 @@ import static org.mockito.Mockito.when;
 class DeliveryTaskExternalAttemptFenceTest {
 
     @Test
-    void multipleMessagesReuseOnePersistedExternalAttemptMarker() {
+    void everyMessageRechecksPersistedEligibilityAndStopsIfOrderChanges() {
         DeliveryTaskService deliveryTaskService = mock(DeliveryTaskService.class);
         AutoDeliveryService autoDeliveryService = mock(AutoDeliveryService.class);
         XianyuGoodsOrderMapper orderMapper = mock(XianyuGoodsOrderMapper.class);
@@ -62,14 +62,14 @@ class DeliveryTaskExternalAttemptFenceTest {
         when(accountMapper.selectById(7L)).thenReturn(account);
         when(blacklistService.isBlacklisted(7L, "buyer-42")).thenReturn(false);
         when(deliveryTaskService.isLeaseActive(eq(23L), any(String.class))).thenReturn(true);
-        when(deliveryTaskService.beginExternalAttempt(eq(23L), any(String.class))).thenReturn(true);
+        when(deliveryTaskService.beginExternalAttempt(eq(23L), any(String.class))).thenReturn(true, false);
         when(orderMapper.selectById(23L)).thenReturn(result);
         doReturn(renewal).when(taskScheduler)
                 .scheduleAtFixedRate(any(Runnable.class), any(Duration.class));
         doAnswer(invocation -> {
             BooleanSupplier externalAttemptAllowed = invocation.getArgument(8);
             assertTrue(externalAttemptAllowed.getAsBoolean());
-            assertTrue(externalAttemptAllowed.getAsBoolean());
+            org.junit.jupiter.api.Assertions.assertFalse(externalAttemptAllowed.getAsBoolean());
             return null;
         }).when(autoDeliveryService).executeDelivery(
                 eq(23L), eq(7L), eq("goods-1"), eq("buyer-42@goofish"),
@@ -78,7 +78,7 @@ class DeliveryTaskExternalAttemptFenceTest {
         ReflectionTestUtils.invokeMethod(scheduler, "executeTask", task);
 
         String workerId = (String) ReflectionTestUtils.getField(scheduler, "workerId");
-        verify(deliveryTaskService, times(1)).beginExternalAttempt(23L, workerId);
+        verify(deliveryTaskService, times(2)).beginExternalAttempt(23L, workerId);
         verify(deliveryTaskService).complete(23L, workerId);
         verify(renewal).cancel(false);
     }
