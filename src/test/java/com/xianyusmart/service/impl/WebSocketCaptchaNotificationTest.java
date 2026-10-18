@@ -23,6 +23,27 @@ import static org.mockito.Mockito.when;
 class WebSocketCaptchaNotificationTest {
 
     @Test
+    void persistedVerificationWithoutUrlNotifiesAfterRestartAndRetriesRejectedSubmission() {
+        var service = new WebSocketTokenServiceImpl();
+        var accounts = mock(XianyuAccountMapper.class);
+        var account = new XianyuAccount();
+        account.setStatus(-2);
+        when(accounts.selectById(7L)).thenReturn(account);
+        var notifications = mock(NotificationChannelService.class);
+        org.mockito.Mockito.doThrow(new java.util.concurrent.RejectedExecutionException()).doNothing()
+                .when(notifications).dispatchMessage(eq("CREDENTIAL_UPDATE_REQUIRED"), eq(7L), any(Map.class));
+        ReflectionTestUtils.setField(service, "xianyuAccountMapper", accounts);
+        ReflectionTestUtils.setField(service, "notificationChannelService", notifications);
+        ReflectionTestUtils.setField(service, "webSocketService", mock(WebSocketService.class));
+        ReflectionTestUtils.setField(service, "operationLogService", mock(OperationLogService.class));
+        for (int i = 0; i < 3; i++) {
+            ReflectionTestUtils.invokeMethod(service, "rememberCaptchaRequirement", 7L, null, "需要验证");
+        }
+        verify(notifications, times(2)).dispatchMessage(eq("CREDENTIAL_UPDATE_REQUIRED"), eq(7L), any(Map.class));
+        assertTrue(service.isCaptchaPending(7L));
+    }
+
+    @Test
     void captchaNotifiesOnNewUrlButNotOnRepeatedOrEmptyUrl() {
         WebSocketTokenServiceImpl service = new WebSocketTokenServiceImpl();
         WebSocketService webSocketService = mock(WebSocketService.class);

@@ -951,12 +951,14 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                     String.valueOf(accountId), null, null, reason, null);
         }
         captchaNotifiedUrls.compute(accountId, (id, lastNotifiedUrl) -> {
-            boolean first = newVerificationEpisode && !captchaNotificationTimes.containsKey(id);
+            // Persisted status=-2 after restart, or a challenge without a URL, still needs a first alert.
+            boolean first = !captchaNotificationTimes.containsKey(id);
             boolean refreshed = !storedUrl.isBlank() && !storedUrl.equals(lastNotifiedUrl);
             if (first || refreshed) {
-                captchaNotificationTimes.put(id, System.currentTimeMillis());
-                notifyCaptchaRequired(id, reason);
-                return storedUrl;
+                if (notifyCaptchaRequired(id, reason)) {
+                    captchaNotificationTimes.put(id, System.currentTimeMillis());
+                    return storedUrl;
+                }
             }
             return lastNotifiedUrl;
         });
@@ -985,8 +987,8 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
         return "";
     }
 
-    private void notifyCaptchaRequired(Long accountId, String reason) {
-        if (notificationChannelService == null) return;
+    private boolean notifyCaptchaRequired(Long accountId, String reason) {
+        if (notificationChannelService == null) return false;
         try {
             java.util.Map<String, Object> params = new java.util.HashMap<>();
             params.put("credentialType", "WebSocket Token");
@@ -998,8 +1000,10 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                         + "），在该账号验证窗口内完成滑块；验证通过后系统会尝试恢复连接。请勿反复扫码或直接打开过期验证链接。"
                     : "账号需要完成滑块验证。请在账号管理配置 VNC 远程验证，或使用对应账号浏览器登录 https://www.goofish.com/im 完成验证后更新Cookie。");
             notificationChannelService.dispatchMessage("CREDENTIAL_UPDATE_REQUIRED", accountId, params);
+            return true;
         } catch (Exception exception) {
             log.warn("【账号{}】安全验证通知发送失败: {}", accountId, exception.getMessage());
+            return false;
         }
     }
 
@@ -1067,8 +1071,8 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                 XianyuAccount account = xianyuAccountMapper.selectById(accountId);
                 String accountNote = account != null ? account.getAccountNote() : null;
                 log.info("【账号{}】Cookie已确认无法自动续期，触发Cookie过期通知流程", accountId);
-                emailNotifyService.sendCookieExpireNotifyEmail(accountId, accountNote);
                 notifyCredentialUpdateRequired(accountId);
+                if (emailNotifyService != null) emailNotifyService.sendCookieExpireNotifyEmail(accountId, accountNote);
             } else if (Objects.equals(status, 2) && !Objects.equals(oldStatus, 2)) {
                 log.info("【账号{}】Cookie被标记为过期，但系统将尝试自动续期，暂不发送邮件通知", accountId);
             }

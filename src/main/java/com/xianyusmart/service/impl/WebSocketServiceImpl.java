@@ -19,6 +19,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.xianyusmart.service.OnlineUpdateMaintenanceService;
 
 import java.net.URI;
 import java.util.HashMap;
@@ -72,6 +75,12 @@ public class WebSocketServiceImpl implements WebSocketService {
     @Autowired
     private CredentialUpdateCoordinator credentialUpdateCoordinator;
 
+    @Autowired(required = false)
+    private OnlineUpdateMaintenanceService onlineUpdateMaintenanceService;
+
+    private final AtomicBoolean notificationScanRunning = new AtomicBoolean(false);
+    private volatile boolean shuttingDown;
+
 
     // 存储WebSocket客户端
     private final Map<Long, XianyuWebSocketClient> webSocketClients = new ConcurrentHashMap<>();
@@ -119,13 +128,13 @@ public class WebSocketServiceImpl implements WebSocketService {
     // 重连次数记录（参考Python的无限重连但有退避）
     private final Map<Long, AtomicInteger> reconnectAttemptCounts = new ConcurrentHashMap<>();
 
-    // 邮件通知防抖记录（避免频繁发送）
+    // 所有掉线通知共用防抖，独立于邮件渠道的开关。
     private final Map<Long, Long> lastDisconnectNotifyTimes = new ConcurrentHashMap<>();
 
-    // 重连失败达到此次数后触发邮件通知
+    // 重连失败达到此次数后触发通知（另有异常断开和定期检查兜底）。
     private static final int RECONNECT_NOTIFY_THRESHOLD = 3;
 
-    // 邮件通知最小间隔（10分钟）
+    // 同一账号掉线通知最小间隔（10分钟）
     private static final long NOTIFY_INTERVAL_MS = 10 * 60 * 1000;
     private static final long TOKEN_REFRESH_BASE_LEAD_MS = TimeUnit.MINUTES.toMillis(60);
     private static final long TOKEN_REFRESH_JITTER_MIN_MS = TimeUnit.MINUTES.toMillis(5);
@@ -358,15 +367,7 @@ public class WebSocketServiceImpl implements WebSocketService {
             });
             
             // 设置连接关闭回调（参考Python的finally块中重连逻辑）
-            client.setOnConnectionClosed(() -> {
-                log.warn("【账号{}】WebSocket连接被关闭，触发自动重连...", accountId);
-
-                Boolean restartFlag = connectionRestartFlags.get(accountId);
-                boolean isManualRestart = restartFlag != null && restartFlag;
-                
-                int delay = isManualRestart ? 0 : config.getReconnectDelay();
-                scheduleReconnect(accountId, delay, isManualRestart);
-            });
+            client.setOnConnectionClosed(() -> handleUnexpectedConnectionClosed(accountId, client));
 
             // 连接WebSocket（参考Python的connect方法）
             log.info("正在连接WebSocket: {}", WEBSOCKET_URL);
@@ -547,6 +548,8 @@ public class WebSocketServiceImpl implements WebSocketService {
     }
 
     private void markAccountConnected(Long accountId) {
+        // A recovered account starts a new incident if it later disconnects again.
+        lastDisconnectNotifyTimes.remove(accountId);
         try {
             XianyuAccount account = xianyuAccountMapper.selectById(accountId);
             if (account != null && Integer.valueOf(-2).equals(account.getStatus())) {
@@ -857,9 +860,19 @@ public class WebSocketServiceImpl implements WebSocketService {
             Long response = lastHeartbeatResponseTimes.get(accountId);
             long window = Math.max(1L, (long) config.getHeartbeatInterval() + config.getHeartbeatTimeout());
             if (response != null && System.currentTimeMillis() / 1000 - response >= window * HEARTBEAT_CONSECUTIVE_TIMEOUT_LIMIT) {
+                triggerWsDisconnectNotify(accountId);
                 scheduleReconnect(accountId, config.getReconnectDelay(), false);
             }
         }, 0, TimeUnit.SECONDS);
+    }
+
+    private void handleUnexpectedConnectionClosed(Long accountId, XianyuWebSocketClient client) {
+        // Ignore a late callback from a connection already replaced/stopped.
+        if (webSocketClients.get(accountId) != client || shuttingDown) return;
+        log.warn("【账号{}】WebSocket连接被关闭，触发自动重连...", accountId);
+        boolean restarting = Boolean.TRUE.equals(connectionRestartFlags.get(accountId));
+        if (!restarting) triggerWsDisconnectNotify(accountId);
+        scheduleReconnect(accountId, restarting ? 0 : config.getReconnectDelay(), restarting);
     }
     
     /**
@@ -980,6 +993,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                     log.warn("【账号{}】触发安全验证，WebSocket自动重连已暂停，等待用户完成验证后手动重连", accountId);
                 } catch (Exception e) {
                     log.error("【账号{}】重连异常，将继续尝试...", accountId, e);
+                    if (currentAttempt >= RECONNECT_NOTIFY_THRESHOLD) triggerWsDisconnectNotify(accountId);
                     retry = true;
                 } finally {
                     boolean current = reconnectTasks.remove(accountId, ticket);
@@ -1121,48 +1135,89 @@ public class WebSocketServiceImpl implements WebSocketService {
      */
     @PreDestroy
     public void cleanup() {
+        shuttingDown = true;
         log.info("应用关闭，清理WebSocket资源");
         stopAllWebSockets();
         
     }
 
-    private void triggerWsDisconnectNotify(Long accountId) {
+    /** Catch pre-existing offline/verification states even when no close callback occurs. */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
+    public void checkUnavailableAccountNotifications() {
+        if (notificationsPaused() || !notificationScanRunning.compareAndSet(false, true)) return;
         try {
-            if (emailNotifyService == null || !emailNotifyService.isWsDisconnectNotifyEnabled()) {
-                return;
-            }
-            // 防抖：10分钟内只发送一次
-            Long lastNotifyTime = lastDisconnectNotifyTimes.get(accountId);
-            long now = System.currentTimeMillis();
-            if (lastNotifyTime != null && (now - lastNotifyTime) < NOTIFY_INTERVAL_MS) {
-                log.debug("【账号{}】邮件通知防抖中，跳过本次发送", accountId);
-                return;
-            }
-            lastDisconnectNotifyTimes.put(accountId, now);
-
-            String accountNote = "";
-            try {
-                com.xianyusmart.entity.XianyuAccount account = xianyuAccountMapper.selectById(accountId);
-                if (account != null) {
-                    accountNote = account.getAccountNote() != null ? account.getAccountNote() : "";
+            scheduleSocketWork(() -> {
+                try {
+                    notifyUnavailableAccounts();
+                } catch (Exception e) {
+                    log.warn("检查账号掉线通知失败", e);
+                } finally {
+                    notificationScanRunning.set(false);
                 }
-            } catch (Exception e) {
-                log.debug("获取账号备注失败: {}", e.getMessage());
-            }
-            emailNotifyService.sendWsDisconnectNotifyEmail(accountId, accountNote);
-            
-            // --- 触发多渠道通知 ---
-            try {
-                java.util.Map<String, Object> params = new java.util.HashMap<>();
-                String timeStr = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
-                params.put("reason", String.format("账号在 %s 掉线！WebSocket连接断开且无法重连（可能是Cookie过期或被风控）。建议立即前往后台重新扫码登录！", timeStr));
-                notificationChannelService.dispatchMessage("ACCOUNT_OFFLINE", accountId, params);
-            } catch (Exception ex) {
-                log.error("触发账号掉线多渠道通知失败", ex);
-            }
-            
-        } catch (Exception e) {
-            log.warn("触发WebSocket断开连接邮件通知异常: {}", e.getMessage());
+            }, 0, TimeUnit.SECONDS);
+        } catch (RuntimeException e) {
+            notificationScanRunning.set(false);
+            log.warn("账号掉线通知检查暂时无法调度", e);
         }
+    }
+
+    private void notifyUnavailableAccounts() {
+        if (notificationsPaused()) return;
+        for (XianyuAccount account : xianyuAccountMapper.selectList(
+                new QueryWrapper<XianyuAccount>().in("status", 1, -2))) {
+            if (account.getId() != null && (Integer.valueOf(1).equals(account.getStatus())
+                    || Integer.valueOf(-2).equals(account.getStatus())) && !isConnected(account.getId())) {
+                triggerWsDisconnectNotify(account.getId());
+            }
+        }
+    }
+
+    private boolean notificationsPaused() {
+        return shuttingDown || (onlineUpdateMaintenanceService != null && onlineUpdateMaintenanceService.isActive());
+    }
+
+    private void triggerWsDisconnectNotify(Long accountId) {
+        if (accountId == null || notificationsPaused()) return;
+        XianyuAccount account;
+        try {
+            account = xianyuAccountMapper.selectById(accountId);
+            if (account == null || Integer.valueOf(0).equals(account.getStatus())) return;
+        } catch (Exception e) {
+            log.warn("读取账号掉线通知状态失败: accountId={}", accountId, e);
+            return;
+        }
+        long now = System.currentTimeMillis();
+        AtomicBoolean acquired = new AtomicBoolean(false);
+        lastDisconnectNotifyTimes.compute(accountId, (id, last) -> {
+            if (last != null && now - last < NOTIFY_INTERVAL_MS) return last;
+            acquired.set(true);
+            return now;
+        });
+        if (!acquired.get()) return;
+
+        boolean accepted = false;
+        // Each channel owns its switch; SMTP settings must never suppress PushPlus/Bark/etc.
+        try {
+            if (notificationChannelService != null) {
+                Map<String, Object> params = new HashMap<>();
+                params.put("reason", Integer.valueOf(-2).equals(account.getStatus())
+                        ? "账号需要完成平台安全验证，消息监听已暂停。请前往账号管理完成验证或更新凭证。"
+                        : "账号消息监听连接已断开。请前往账号管理查看连接和自动恢复状态；如提示凭证失效或需要验证，请按页面指引处理。");
+                notificationChannelService.dispatchMessage("ACCOUNT_OFFLINE", accountId, params);
+                accepted = true;
+            }
+        } catch (Exception e) {
+            log.warn("触发账号掉线多渠道通知失败: accountId={}", accountId, e);
+        }
+        try {
+            if (emailNotifyService != null && emailNotifyService.isWsDisconnectNotifyEnabled()) {
+                emailNotifyService.sendWsDisconnectNotifyEmail(accountId, account.getAccountNote());
+                accepted = true;
+            }
+        } catch (Exception e) {
+            log.warn("触发账号掉线邮件通知失败: accountId={}", accountId, e);
+        }
+        // Rejected async submissions must be eligible for the next periodic check.
+        if (!accepted) lastDisconnectNotifyTimes.remove(accountId, now);
     }
 }

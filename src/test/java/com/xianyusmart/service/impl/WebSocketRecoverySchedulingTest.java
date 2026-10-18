@@ -83,6 +83,20 @@ class WebSocketRecoverySchedulingTest {
     }
 
     @Test
+    void repeatedReconnectExceptionsAlsoNotifyWithoutEmailEnabled() throws Exception {
+        var notifications = mock(com.xianyusmart.service.NotificationChannelService.class);
+        ReflectionTestUtils.setField(service, "notificationChannelService", notifications);
+        doThrow(new IllegalStateException("reconnect failed")).when(service).startWebSocket(7L);
+        schedule();
+        for (int i = 0; i < 3; i++) {
+            timers.remove().run();
+            runWorker();
+        }
+        verify(notifications).dispatchMessage(eq("ACCOUNT_OFFLINE"), eq(7L), anyMap());
+        assertFalse(timers.isEmpty());
+    }
+
+    @Test
     void timerOnlyQueuesWorkAndDuplicateReconnectCannotEnterQueue() throws Exception {
         schedule();
         timers.remove().run();
