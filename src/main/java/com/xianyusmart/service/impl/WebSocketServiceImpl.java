@@ -134,8 +134,8 @@ public class WebSocketServiceImpl implements WebSocketService {
     // 重连失败达到此次数后触发通知（另有异常断开和定期检查兜底）。
     private static final int RECONNECT_NOTIFY_THRESHOLD = 3;
 
-    // 同一账号掉线通知最小间隔（10分钟）
-    private static final long NOTIFY_INTERVAL_MS = 10 * 60 * 1000;
+    // 同一账号持续掉线时，每小时最多重复提醒一次。
+    private static final long NOTIFY_INTERVAL_MS = TimeUnit.HOURS.toMillis(1);
     private static final long TOKEN_REFRESH_BASE_LEAD_MS = TimeUnit.MINUTES.toMillis(60);
     private static final long TOKEN_REFRESH_JITTER_MIN_MS = TimeUnit.MINUTES.toMillis(5);
     private static final long TOKEN_REFRESH_JITTER_MAX_MS = TimeUnit.MINUTES.toMillis(20);

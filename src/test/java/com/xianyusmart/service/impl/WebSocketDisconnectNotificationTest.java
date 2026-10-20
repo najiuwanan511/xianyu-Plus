@@ -100,10 +100,16 @@ class WebSocketDisconnectNotificationTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    void continuedOutageCanNotifyAgainAfterTenMinutes() {
+    void continuedOutageWaitsOneHourBeforeNotifyingAgain() {
         notifyOffline();
         var times = (Map<Long, Long>) ReflectionTestUtils.getField(service, "lastDisconnectNotifyTimes");
         times.put(7L, System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(10) - 1);
+        notifyOffline();
+        verify(notifications).dispatchMessage(eq("ACCOUNT_OFFLINE"), eq(7L), anyMap());
+        times.put(7L, System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(59));
+        notifyOffline();
+        verify(notifications).dispatchMessage(eq("ACCOUNT_OFFLINE"), eq(7L), anyMap());
+        times.put(7L, System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1) - 1);
         notifyOffline();
         verify(notifications, times(2)).dispatchMessage(eq("ACCOUNT_OFFLINE"), eq(7L), anyMap());
     }
