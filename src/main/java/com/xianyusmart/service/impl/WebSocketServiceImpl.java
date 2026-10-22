@@ -147,6 +147,9 @@ public class WebSocketServiceImpl implements WebSocketService {
      */
     private static final String WEBSOCKET_URL = "wss://wss-goofish.dingtalk.com/";
 
+    /** 自动流程等待平台回执的默认超时（秒），保持原有行为不变 */
+    private static final int DEFAULT_ACK_TIMEOUT_SECONDS = 10;
+
     @Override
     public boolean startWebSocket(Long accountId) {
         return startWebSocket(accountId, false);
@@ -1070,9 +1073,14 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Override
     public boolean sendMessageWithResult(Long accountId, String cid, String toId, String text) {
+        return sendMessageWithResult(accountId, cid, toId, text, DEFAULT_ACK_TIMEOUT_SECONDS);
+    }
+
+    @Override
+    public boolean sendMessageWithResult(Long accountId, String cid, String toId, String text, int timeoutSeconds) {
         try {
-            log.info("发送消息(等待结果): accountId={}, cid={}, toId={}, textLength={}",
-                    accountId, cid, toId, text == null ? 0 : text.length());
+            log.info("发送消息(等待结果): accountId={}, cid={}, toId={}, textLength={}, timeout={}s",
+                    accountId, cid, toId, text == null ? 0 : text.length(), timeoutSeconds);
             
             XianyuWebSocketClient client = webSocketClients.get(accountId);
             if (client == null) {
@@ -1085,7 +1093,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                 return false;
             }
             
-            return client.sendMessageWithResult(cid, toId, text);
+            return client.sendMessageWithResult(cid, toId, text, timeoutSeconds);
             
         } catch (Exception e) {
             log.error("发送消息失败: accountId={}, cid={}, toId={}", accountId, cid, toId, e);
@@ -1107,9 +1115,14 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Override
     public boolean sendImageMessageWithResult(Long accountId, String cid, String toId, String imageUrl, int width, int height) {
+        return sendImageMessageWithResult(accountId, cid, toId, imageUrl, width, height, DEFAULT_ACK_TIMEOUT_SECONDS);
+    }
+
+    @Override
+    public boolean sendImageMessageWithResult(Long accountId, String cid, String toId, String imageUrl, int width, int height, int timeoutSeconds) {
         try {
-            log.info("发送图片消息(等待结果): accountId={}, cid={}, toId={}, size={}x{}",
-                    accountId, cid, toId, width, height);
+            log.info("发送图片消息(等待结果): accountId={}, cid={}, toId={}, size={}x{}, timeout={}s",
+                    accountId, cid, toId, width, height, timeoutSeconds);
 
             XianyuWebSocketClient client = webSocketClients.get(accountId);
             if (client == null) {
@@ -1122,7 +1135,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                 return false;
             }
 
-            return client.sendImageMessageWithResult(cid, toId, imageUrl, width, height);
+            return client.sendImageMessageWithResult(cid, toId, imageUrl, width, height, timeoutSeconds);
 
         } catch (Exception e) {
             log.error("发送图片消息失败: accountId={}, cid={}, toId={}", accountId, cid, toId, e);

@@ -25,6 +25,14 @@ public class WebSocketController {
     @Autowired
     private WebSocketService webSocketService;
 
+    /**
+     * 在线客服手动发送等待平台回执的超时（秒）。
+     *
+     * <p>自动流程沿用 10 秒超时以保证幂等判断的准确性；手动发送是人在等界面响应，
+     * 超时后平台仍会送达，因此用更短的超时换取即时反馈。</p>
+     */
+    private static final int MANUAL_SEND_ACK_TIMEOUT_SECONDS = 2;
+
     @Autowired
     private ImageDimensionService imageDimensionService;
     
@@ -250,12 +258,15 @@ public class WebSocketController {
             autoReplyDelayService.recordCustomerServiceReply(
                     reqDTO.getXianyuAccountId(), reqDTO.getXyGoodsId(), sId);
 
-            // 发送消息
-            boolean success = webSocketService.sendMessage(
+            // 发送消息。
+            // 在线客服是人机交互场景：消息帧写入已连接的 WebSocket 后买家即可收到，
+            // 这里只做短超时确认，避免 HTTP 线程因平台回执慢而长时间阻塞（表现为界面卡顿/延迟）。
+            boolean success = webSocketService.sendMessageWithResult(
                     reqDTO.getXianyuAccountId(),
                     reqDTO.getCid(),
                     reqDTO.getToId(),
-                    reqDTO.getText()
+                    reqDTO.getText(),
+                    MANUAL_SEND_ACK_TIMEOUT_SECONDS
             );
             
             if (success) {
@@ -315,14 +326,15 @@ public class WebSocketController {
             autoReplyDelayService.recordCustomerServiceReply(
                     reqDTO.getXianyuAccountId(), reqDTO.getXyGoodsId(), sId);
 
-            // 发送图片消息
-            boolean success = webSocketService.sendImageMessage(
+            // 发送图片消息（同手动文本消息，使用短超时避免 HTTP 线程长时间阻塞）
+            boolean success = webSocketService.sendImageMessageWithResult(
                     reqDTO.getXianyuAccountId(),
                     reqDTO.getCid(),
                     reqDTO.getToId(),
                     reqDTO.getImageUrl(),
                     width,
-                    height
+                    height,
+                    MANUAL_SEND_ACK_TIMEOUT_SECONDS
             );
             
             if (success) {

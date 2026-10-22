@@ -23,6 +23,9 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class XianyuWebSocketClient extends WebSocketClient {
 
+    /** 等待平台回执的默认超时（秒），自动流程沿用原有行为 */
+    private static final int DEFAULT_ACK_TIMEOUT_SECONDS = 10;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String accountId;
     private final AccountDisplayNameUtils displayNameUtils;
@@ -631,6 +634,19 @@ public class XianyuWebSocketClient extends WebSocketClient {
      * @return true=服务端返回200，false=失败或超时
      */
     public boolean sendMessageWithResult(String cid, String toId, String text) {
+        return sendMessageWithResult(cid, toId, text, DEFAULT_ACK_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * 发送消息并等待响应结果
+     *
+     * @param cid 会话ID
+     * @param toId 接收方用户ID
+     * @param text 消息文本内容
+     * @param timeoutSeconds 等待平台回执的最长秒数
+     * @return true=服务端返回200或回执超时（消息已提交），false=失败
+     */
+    public boolean sendMessageWithResult(String cid, String toId, String text, int timeoutSeconds) {
         if (!isConnected) {
             log.error("【账号{}】WebSocket未连接，无法发送消息", accountId);
             return false;
@@ -710,10 +726,10 @@ public class XianyuWebSocketClient extends WebSocketClient {
             String messageJson = objectMapper.writeValueAsString(message);
             log.debug("【账号{}】发送消息帧已生成: mid={}, payloadLength={}", accountId, mid, messageJson.length());
             send(messageJson);
-            log.info("【账号{}】消息已发送到WebSocket，等待响应: mid={}", accountId, mid);
+            log.info("【账号{}】消息已发送到WebSocket，等待响应: mid={}, timeout={}s", accountId, mid, timeoutSeconds);
             
             try {
-                Integer code = future.get(10, TimeUnit.SECONDS);
+                Integer code = future.get(timeoutSeconds, TimeUnit.SECONDS);
                 boolean success = code != null && code == 200;
                 if (success) {
                     log.info("【账号{}】✅ 消息发送成功(服务端返回200): mid={}", accountId, mid);
@@ -724,7 +740,7 @@ public class XianyuWebSocketClient extends WebSocketClient {
             } catch (java.util.concurrent.TimeoutException e) {
                 // 消息帧已经成功写入已连接的 WebSocket。平台偶发不回传回执时，买家仍可能收到消息；
                 // 此处按“已提交”继续后续发货流程，避免重复补发卡密并阻断自动确认发货。
-                log.warn("【账号{}】消息回执超时（10秒），消息已提交至平台，按已发送处理: mid={}", accountId, mid);
+                log.warn("【账号{}】消息回执超时（{}秒），消息已提交至平台，按已发送处理: mid={}", accountId, timeoutSeconds, mid);
                 return true;
             } finally {
                 pendingResponses.remove(mid);
@@ -841,6 +857,16 @@ public class XianyuWebSocketClient extends WebSocketClient {
      * 发送图片消息并等待服务端响应确认
      */
     public boolean sendImageMessageWithResult(String cid, String toId, String imageUrl, int width, int height) {
+        return sendImageMessageWithResult(cid, toId, imageUrl, width, height, DEFAULT_ACK_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * 发送图片消息并等待响应结果
+     *
+     * @param timeoutSeconds 等待平台回执的最长秒数
+     * @return true=服务端返回200或回执超时（消息已提交），false=失败
+     */
+    public boolean sendImageMessageWithResult(String cid, String toId, String imageUrl, int width, int height, int timeoutSeconds) {
         if (!isConnected) {
             log.error("{}WebSocket未连接，无法发送图片消息", logPrefix());
             return false;
@@ -928,7 +954,7 @@ public class XianyuWebSocketClient extends WebSocketClient {
             log.info("{}图片消息已发送，等待响应: mid={}", logPrefix(), mid);
 
             try {
-                Integer code = future.get(10, TimeUnit.SECONDS);
+                Integer code = future.get(timeoutSeconds, TimeUnit.SECONDS);
                 boolean success = code != null && code == 200;
                 if (success) {
                     log.info("{}✅ 图片消息发送成功(服务端返回200): mid={}", logPrefix(), mid);

@@ -575,8 +575,8 @@ const sendReply = async () => {
     draft.value = ''
     imageUrls.value = ''
     showImageUploader.value = false
-    await loadMessages(true)
-    await loadSessions(true)
+    // 并行拉取，避免两次串行请求叠加到发送耗时上
+    await Promise.all([loadMessages(true), loadSessions(true)])
     showSuccess('发送成功，已进入人工接管')
   } catch (error: any) {
     showError(error.message || '发送失败，请检查连接状态')

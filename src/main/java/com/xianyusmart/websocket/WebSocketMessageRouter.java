@@ -129,6 +129,24 @@ public class WebSocketMessageRouter {
 
     
     /**
+     * 解析平台回执中的 code 字段
+     *
+     * <p>平台回执的 code 可能以 200、200.0、"200" 等形态出现。直接用 Integer.parseInt 解析
+     * "200.0" 会抛出 NumberFormatException，若再被静默吞掉，发送方就会每次都白等到超时，
+     * 表现为客服消息"发出去很慢"。</p>
+     */
+    private int parseCodeValue(Object code) {
+        if (code instanceof Number) {
+            return ((Number) code).intValue();
+        }
+        String raw = String.valueOf(code).trim();
+        if (raw.endsWith(".0")) {
+            raw = raw.substring(0, raw.length() - 2);
+        }
+        return Integer.parseInt(raw);
+    }
+
+    /**
      * 处理响应消息（没有lwp字段，但有code字段）
      */
     private void handleResponseMessage(String accountId, Map<String, Object> messageData) {
@@ -149,17 +167,18 @@ public class WebSocketMessageRouter {
                 Map<String, Object> headers = (Map<String, Object>) headersObj;
                 Object mid = headers.get("mid");
                 if (mid != null) {
-                    int codeValue = Integer.parseInt(code.toString());
+                    int codeValue = parseCodeValue(code);
                     ((com.xianyusmart.service.impl.WebSocketServiceImpl) webSocketService)
                         .completePendingResponse(accountIdLong, mid.toString(), codeValue);
                 }
             }
         } catch (Exception e) {
-            log.debug("完成pendingResponse失败: {}", e.getMessage());
+            // 回执匹配失败会导致发送方白等到超时，这里必须留下可见日志
+            log.warn("完成pendingResponse失败: {}", e.getMessage());
         }
         
         try {
-            int codeValue = Integer.parseInt(code.toString());
+            int codeValue = parseCodeValue(code);
             
             if (codeValue == 200) {
                 // 检查是否是消息发送响应

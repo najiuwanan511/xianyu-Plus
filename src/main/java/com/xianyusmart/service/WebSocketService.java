@@ -72,6 +72,21 @@ public interface WebSocketService {
      * @return true=服务端返回200，false=失败
      */
     boolean sendMessageWithResult(Long accountId, String cid, String toId, String text);
+
+    /**
+     * 发送消息并等待服务端响应结果（可指定回执等待超时）
+     *
+     * <p>在线客服手动发送属于人机交互场景，不能让 HTTP 请求线程长时间阻塞在等待平台上，
+     * 因此允许使用一个远小于自动流程的超时时间。</p>
+     *
+     * @param accountId 账号ID
+     * @param cid 会话ID
+     * @param toId 接收方用户ID
+     * @param text 消息文本内容
+     * @param timeoutSeconds 等待平台回执的最长秒数
+     * @return true=服务端返回200或回执超时（消息已提交），false=发送失败
+     */
+    boolean sendMessageWithResult(Long accountId, String cid, String toId, String text, int timeoutSeconds);
     
     /**
      * 发送图片消息
@@ -90,4 +105,12 @@ public interface WebSocketService {
      * 发送图片消息并等待服务端响应确认
      */
     boolean sendImageMessageWithResult(Long accountId, String cid, String toId, String imageUrl, int width, int height);
+
+    /**
+     * 发送图片消息并等待服务端响应确认（可指定回执等待超时）
+     *
+     * @param timeoutSeconds 等待平台回执的最长秒数
+     * @return true=服务端返回200或回执超时（消息已提交），false=发送失败
+     */
+    boolean sendImageMessageWithResult(Long accountId, String cid, String toId, String imageUrl, int width, int height, int timeoutSeconds);
 }
