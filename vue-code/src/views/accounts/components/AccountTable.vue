@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { getAccountStatusText, formatTime } from '@/utils'
 import type { Account } from '@/types'
+import type { ComponentPublicInstance } from 'vue'
 
 import IconEdit from '@/components/icons/IconEdit.vue'
 import IconTrash from '@/components/icons/IconTrash.vue'
@@ -27,6 +28,8 @@ interface Emits {
   (e: 'connection', account: Account): void
   (e: 'automationSettings', account: Account, section: AutomationSection): void
   (e: 'polishShortcut', account: Account): void
+  (e: 'toggleAutomation', account: Account, key: 'rate' | 'flower'): void
+  (e: 'saveNote', account: Account, note: string): void
 }
 
 defineProps<Props>()
@@ -38,6 +41,35 @@ const isCompact = ref(false)
 const openedActionMenuId = ref<number | null>(null)
 const failedAvatarIds = ref<Set<number>>(new Set())
 let layoutObserver: ResizeObserver | null = null
+
+// 行内编辑账号备注的状态：同一时间只允许一个账号处于编辑态
+const editingNoteAccountId = ref<number | null>(null)
+const noteDraft = ref('')
+
+const startNoteEdit = (account: Account) => {
+  editingNoteAccountId.value = account.id
+  noteDraft.value = account.accountNote || ''
+  nextTick(() => {
+    document.querySelector<HTMLInputElement>('.account-note-input')?.focus()
+  })
+}
+
+const confirmNoteEdit = (account: Account) => {
+  if (editingNoteAccountId.value !== account.id) return
+  const note = noteDraft.value.trim()
+  editingNoteAccountId.value = null
+  if (note === (account.accountNote || '').trim()) return
+  emit('saveNote', account, note)
+}
+
+const cancelNoteEdit = () => {
+  editingNoteAccountId.value = null
+}
+
+const focusNoteInput = (el: Element | ComponentPublicInstance | null) => {
+  if (el instanceof HTMLInputElement) el.focus()
+}
+
 
 const checkScreenSize = () => {
   // The side navigation can leave far less room than window.innerWidth suggests.
@@ -175,7 +207,20 @@ const refreshAvatar = (account: Account) => {
         <div class="account-card__info">
           <div class="account-card__name-row">
             <span class="account-card__name">{{ account.unb || '未命名账号' }}</span>
-            <button type="button" class="account-note-edit" title="修改账号备注" @click="emit('edit', account)">
+            <input
+              v-if="editingNoteAccountId === account.id"
+              :ref="focusNoteInput"
+              v-model="noteDraft"
+              class="account-note-input"
+              type="text"
+              maxlength="100"
+              placeholder="输入备注，留空清除"
+              @click.stop
+              @keydown.enter.prevent="confirmNoteEdit(account)"
+              @keydown.esc.prevent="cancelNoteEdit"
+              @blur="confirmNoteEdit(account)"
+            />
+            <button v-else type="button" class="account-note-edit" title="点击直接修改备注" @click="startNoteEdit(account)">
               <IconEdit />
               <span>{{ account.accountNote || '添加备注' }}</span>
             </button>
@@ -214,15 +259,15 @@ const refreshAvatar = (account: Account) => {
       <div class="account-card__automation">
         <span class="account-card__automation-label">自动化</span>
         <div class="account-card__automation-list">
-          <span class="automation-chip" :class="{ 'automation-chip--on': isEnabled(account.autoRateEnabled) }">
+          <button type="button" class="automation-chip automation-chip--toggle" :class="{ 'automation-chip--on': isEnabled(account.autoRateEnabled) }" :title="isEnabled(account.autoRateEnabled) ? '点击关闭自动评价' : '点击开启自动评价'" @click="emit('toggleAutomation', account, 'rate')">
             自动评价 {{ isEnabled(account.autoRateEnabled) ? '已开启' : '已关闭' }}
-          </span>
-          <span class="automation-chip" :class="{ 'automation-chip--on': isEnabled(account.autoAskFlower) }">
+          </button>
+          <button type="button" class="automation-chip automation-chip--toggle" :class="{ 'automation-chip--on': isEnabled(account.autoAskFlower) }" :title="isEnabled(account.autoAskFlower) ? '点击关闭自动求花' : '点击开启自动求花'" @click="emit('toggleAutomation', account, 'flower')">
             自动求花 {{ isEnabled(account.autoAskFlower) ? '已开启' : '已关闭' }}
-          </span>
-          <span class="automation-chip" :class="{ 'automation-chip--on': isEnabled(account.itemPolishEnabled) }">
+          </button>
+          <button type="button" class="automation-chip automation-chip--toggle" :class="{ 'automation-chip--on': isEnabled(account.itemPolishEnabled) }" title="擦亮需配置擦亮时间，点击前往设置" @click="emit('polishShortcut', account)">
             每日擦亮 {{ getItemPolishStatus(account) }}
-          </span>
+          </button>
           <span v-if="isRiskPaused(account)" class="automation-chip automation-chip--risk" :title="account.automationRiskPauseReason">
             自动化已保护暂停
           </span>
@@ -294,7 +339,20 @@ const refreshAvatar = (account: Account) => {
               <div class="account-identity__content">
                 <div class="account-identity__title-row">
                   <strong>{{ account.unb || '未命名账号' }}</strong>
-                  <button type="button" class="account-note-edit" title="修改账号备注" @click="emit('edit', account)">
+                  <input
+                    v-if="editingNoteAccountId === account.id"
+                    :ref="focusNoteInput"
+                    v-model="noteDraft"
+                    class="account-note-input"
+                    type="text"
+                    maxlength="100"
+                    placeholder="输入备注，留空清除"
+                    @click.stop
+                    @keydown.enter.prevent="confirmNoteEdit(account)"
+                    @keydown.esc.prevent="cancelNoteEdit"
+                    @blur="confirmNoteEdit(account)"
+                  />
+                  <button v-else type="button" class="account-note-edit" title="点击直接修改备注" @click="startNoteEdit(account)">
                     <IconEdit />
                     <span>{{ account.accountNote || '添加备注' }}</span>
                   </button>
@@ -314,9 +372,9 @@ const refreshAvatar = (account: Account) => {
           <section class="account-overview-card__section account-overview-card__section--automation">
             <span class="account-overview-card__label">自动化</span>
             <div class="account-overview-card__automation-items">
-              <span :class="{ 'account-overview-card__automation-item--on': isEnabled(account.autoRateEnabled) }">评价 <b>{{ isEnabled(account.autoRateEnabled) ? '开启' : '关闭' }}</b></span>
-              <span :class="{ 'account-overview-card__automation-item--on': isEnabled(account.autoAskFlower) }">小红花 <b>{{ isEnabled(account.autoAskFlower) ? '开启' : '关闭' }}</b></span>
-              <span :class="{ 'account-overview-card__automation-item--on': isEnabled(account.itemPolishEnabled) }">擦亮 <b>{{ getItemPolishStatus(account) }}</b></span>
+              <button type="button" class="account-overview-card__automation-item" :class="{ 'account-overview-card__automation-item--on': isEnabled(account.autoRateEnabled) }" :title="isEnabled(account.autoRateEnabled) ? '点击关闭自动评价' : '点击开启自动评价'" @click="emit('toggleAutomation', account, 'rate')">评价 <b>{{ isEnabled(account.autoRateEnabled) ? '开启' : '关闭' }}</b></button>
+              <button type="button" class="account-overview-card__automation-item" :class="{ 'account-overview-card__automation-item--on': isEnabled(account.autoAskFlower) }" :title="isEnabled(account.autoAskFlower) ? '点击关闭自动求花' : '点击开启自动求花'" @click="emit('toggleAutomation', account, 'flower')">小红花 <b>{{ isEnabled(account.autoAskFlower) ? '开启' : '关闭' }}</b></button>
+              <button type="button" class="account-overview-card__automation-item" :class="{ 'account-overview-card__automation-item--on': isEnabled(account.itemPolishEnabled) }" title="擦亮需配置擦亮时间，点击前往设置" @click="emit('polishShortcut', account)">擦亮 <b>{{ getItemPolishStatus(account) }}</b></button>
             </div>
             <small v-if="isRiskPaused(account)" class="account-overview-card__risk" :title="account.automationRiskPauseReason">
               <span>自动化已保护暂停</span>
@@ -977,6 +1035,44 @@ const refreshAvatar = (account: Account) => {
   border-color: rgba(52,199,89,.22);
 }
 
+/* 可点击的自动化开关：chip 原型变按钮，绿=开 灰=关 */
+button.automation-chip--toggle {
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .15s, background .15s, color .15s;
+}
+
+button.automation-chip--toggle:hover {
+  border-color: #a9c4e8;
+  background: #eef5ff;
+  color: #3972bd;
+}
+
+button.automation-chip--toggle.automation-chip--on:hover {
+  border-color: rgba(52,199,89,.45);
+  background: rgba(52,199,89,.16);
+  color: #16803d;
+}
+
+/* 账号卡行内备注输入框：与 note 按钮同位替换 */
+.account-note-input {
+  min-width: 0;
+  max-width: 145px;
+  padding: 3px 8px;
+  border: 1px solid #3972bd;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--c-text-1, #1f2937);
+  font-size: 11px;
+  line-height: 1.2;
+  outline: none;
+}
+
+.account-note-input:focus {
+  box-shadow: 0 0 0 2px rgba(57,114,189,.15);
+}
+
+
 .automation-chip--risk {
   color: #b54708;
   background: #fffaeb;
@@ -1161,7 +1257,8 @@ const refreshAvatar = (account: Account) => {
   gap: 6px;
 }
 
-.account-overview-card__automation-items > span {
+.account-overview-card__automation-items > span,
+.account-overview-card__automation-items > button.account-overview-card__automation-item {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1172,6 +1269,17 @@ const refreshAvatar = (account: Account) => {
   color: #748196;
   font-size: 11px;
   white-space: nowrap;
+}
+
+.account-overview-card__automation-items > button.account-overview-card__automation-item {
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .15s, background .15s;
+}
+
+.account-overview-card__automation-items > button.account-overview-card__automation-item:hover {
+  border-color: #b9c3d0;
+  background: #f6f8fb;
 }
 
 .account-overview-card__automation-items b {

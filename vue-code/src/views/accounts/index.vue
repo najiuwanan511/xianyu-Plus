@@ -36,6 +36,8 @@ const {
   deleteAccount,
   toggleAccountEnabled,
   resumeAutomation,
+  toggleAutomation,
+  saveAccountNote,
   refreshAccountAvatar
 } = useAccountManager();
 
@@ -120,6 +122,8 @@ void loadAccounts();
           :loading="loading"
           @edit="openAccountEditor"
           @automation-settings="(account, section) => openAccountEditor(account, section)"
+          @toggle-automation="toggleAutomation"
+          @save-note="saveAccountNote"
           @delete="deleteAccount"
           @toggle-enabled="toggleAccountEnabled"
           @resume-automation="resumeAutomation"

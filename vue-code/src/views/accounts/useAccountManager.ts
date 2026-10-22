@@ -1,5 +1,5 @@
 import { ref, reactive } from 'vue'
-import { getAccountList, deleteAccount as deleteAccountApi, setAccountEnabled, resumeAccountAutomation, refreshAccountAvatar as refreshAccountAvatarApi } from '@/api/account'
+import { getAccountList, deleteAccount as deleteAccountApi, setAccountEnabled, resumeAccountAutomation, refreshAccountAvatar as refreshAccountAvatarApi, updateAccount } from '@/api/account'
 import { showSuccess, showError, showConfirm } from '@/utils'
 import type { Account } from '@/types'
 
@@ -110,6 +110,79 @@ export function useAccountManager() {
 
   const refreshingAvatarIds = new Set<number>()
 
+  // 卡片上的自动化开关切换：利用后端 /account/update 的部分更新语义，
+  // 只提交单个开关字段，其余字段保持不动。乐观更新，失败回滚。
+  const automationToggling = new Set<string>()
+
+  type AutomationToggleKey = 'rate' | 'flower'
+
+  // 从未知类型的异常里安全取出提示文案（新代码不再使用 any，避免恶化 lint 基线）
+  const extractErrorMessage = (error: unknown, fallback: string): string => {
+    if (error instanceof Error && error.message) return error.message
+    if (typeof error === 'object' && error !== null && 'message' in error) {
+      const message = (error as { message?: unknown }).message
+      if (typeof message === 'string' && message) return message
+    }
+    return fallback
+  }
+
+  const isAlreadyShownError = (error: unknown): boolean =>
+    typeof error === 'object' && error !== null &&
+    (error as { messageShown?: unknown }).messageShown === true
+
+  const toggleAutomation = async (account: Account, key: AutomationToggleKey) => {
+    if (account.status === 0) {
+      showError('账号已禁用，请先启用账号再调整自动化')
+      return
+    }
+    const field = key === 'rate' ? 'autoRateEnabled' : 'autoAskFlower'
+    const label = key === 'rate' ? '自动评价' : '自动求花'
+    const lockKey = `${account.id}:${key}`
+    if (automationToggling.has(lockKey)) return
+    automationToggling.add(lockKey)
+    const previous = account[field] ?? 0
+    const next = previous === 1 ? 0 : 1
+    account[field] = next
+    try {
+      const response = await updateAccount({ id: account.id, [field]: next })
+      if (response.code !== 0 && response.code !== 200) {
+        throw new Error(response.msg || '更新自动化开关失败')
+      }
+      showSuccess(`${label}已${next === 1 ? '开启' : '关闭'}`)
+    } catch (error: unknown) {
+      account[field] = previous
+      if (!isAlreadyShownError(error)) {
+        showError(`更新${label}失败: ` + extractErrorMessage(error, '未知错误'))
+      }
+    } finally {
+      automationToggling.delete(lockKey)
+    }
+  }
+
+  // 账号卡片行内修改备注：同样走 /account/update 的部分更新，空字符串表示清空备注。
+  const savingNoteIds = new Set<number>()
+
+  const saveAccountNote = async (account: Account, note: string) => {
+    if (savingNoteIds.has(account.id)) return
+    savingNoteIds.add(account.id)
+    const previous = account.accountNote
+    account.accountNote = note
+    try {
+      const response = await updateAccount({ id: account.id, accountNote: note })
+      if (response.code !== 0 && response.code !== 200) {
+        throw new Error(response.msg || '更新账号备注失败')
+      }
+      showSuccess(note ? '账号备注已更新' : '账号备注已清除')
+    } catch (error: unknown) {
+      account.accountNote = previous
+      if (!isAlreadyShownError(error)) {
+        showError('更新账号备注失败: ' + extractErrorMessage(error, '未知错误'))
+      }
+    } finally {
+      savingNoteIds.delete(account.id)
+    }
+  }
+
   const refreshAccountAvatar = async (account: Account) => {
     if (refreshingAvatarIds.has(account.id)) return
     refreshingAvatarIds.add(account.id)
@@ -164,6 +237,8 @@ export function useAccountManager() {
     deleteAccount,
     toggleAccountEnabled,
     resumeAutomation,
+    toggleAutomation,
+    saveAccountNote,
     refreshAccountAvatar,
     confirmDelete
   }
